@@ -40,12 +40,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // --- 向量搜索 API ---
     /**
-     * [核心修改] 修改 `semanticSearch` 函数签名以支持传递 Trace ID。
-     * 现在它接受一个对象 { queryText, traceId } 作为参数，而不是单个字符串。
+     * [核心修改] 修改 `semanticSearch` 函数签名以支持传递额外的过滤参数。
+     * 现在参数统一为一个 payload 对象，方便扩展。
      *
-     * @param {string} queryText - 用户的搜索查询。
-     * @param {string} traceId - 用于追踪本次请求的唯一ID。
+     * @param {Object} payload
+     * @param {string} payload.queryText - 用户的搜索查询。
+     * @param {string} payload.traceId - 用于追踪本次请求的唯一ID。
+     * @param {string} [payload.excludeId] - (可选) 需要排除的笔记ID（通常是当前笔记自身）。
      * @returns {Promise<Array<Object>>} - 包含相似笔记片段信息的数组。
      */
-    semanticSearch: (queryText, traceId) => ipcRenderer.invoke('vectors:search', { queryText, traceId })
+    semanticSearch: ({ queryText, traceId, excludeId }) =>
+        ipcRenderer.invoke('vectors:search', { queryText, traceId, excludeId })
 });

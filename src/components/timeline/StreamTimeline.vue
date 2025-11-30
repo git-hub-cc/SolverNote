@@ -1,6 +1,11 @@
 <template>
   <div class="stream-timeline">
     <!-- 顶部输入区域 -->
+    <!--
+      注意：这里也可以加 @click.stop，防止点击编辑器周围区域时触发取消选中。
+      但在当前布局中，input-area-wrapper 和 timeline-container 是兄弟节点，
+      且 SmartEditor 内部通常会捕获焦点，所以一般不需要额外处理。
+    -->
     <div class="input-area-wrapper">
       <SmartEditor
           ref="smartEditorRef"
@@ -13,8 +18,18 @@
       />
     </div>
 
-    <!-- 笔记时间轴列表容器 -->
-    <div class="timeline-container" ref="timelineContainerRef">
+    <!--
+      笔记时间轴列表容器
+      [修改点]: 添加 @click="handleBackgroundClick"
+      因为 timeline-container 设置了 flex: 1，它会占据剩余的所有屏幕空间。
+      当笔记很少时，下方大片空白区域都属于这个 div。
+      点击这里意味着用户想“取消聚焦”，回到全局聊天模式。
+    -->
+    <div
+        class="timeline-container"
+        ref="timelineContainerRef"
+        @click="handleBackgroundClick"
+    >
 
       <!-- 加载中状态 -->
       <div v-if="noteStore.loading" class="state-msg">
@@ -36,7 +51,10 @@
 
       <!-- 笔记列表 -->
       <div v-else class="notes-list">
-        <!-- 关键修改: 增加 data-note-id 属性，用于 DOM 查询 -->
+        <!--
+          NoteCard 组件内部现在使用了 @click.stop
+          所以点击卡片本身不会冒泡到 timeline-container，不会触发 handleBackgroundClick
+        -->
         <NoteCard
             v-for="note in noteStore.notes"
             :key="note.id"
@@ -53,14 +71,14 @@
 </template>
 
 <script setup>
-import { onMounted, computed, ref, watch, nextTick } from 'vue' // 引入 watch 和 nextTick
+import { onMounted, computed, ref, watch, nextTick } from 'vue'
 import { useNoteStore } from '@/stores/noteStore'
 import SmartEditor from '@/components/editor/SmartEditor.vue'
 import NoteCard from '@/components/timeline/NoteCard.vue'
 
 const noteStore = useNoteStore()
 const smartEditorRef = ref(null)
-const timelineContainerRef = ref(null) // [新增] 引用 timeline 容器
+const timelineContainerRef = ref(null)
 
 const editorContent = computed(() => {
   return noteStore.editingNote ? noteStore.editingNote.content : ''
@@ -73,55 +91,59 @@ onMounted(() => {
   noteStore.fetchNotes()
 })
 
-// --- [新增] 监听滚动请求 ---
+// 监听滚动请求 (保持原有的修复逻辑)
 watch(() => noteStore.scrollToNoteId, async (newId) => {
   if (newId) {
-    // 等待 DOM 更新完成
     await nextTick();
-
     const container = timelineContainerRef.value;
     if (container) {
-      // 通过 data-note-id 属性查找对应的笔记卡片元素
       const targetElement = container.querySelector(`[data-note-id="${newId}"]`);
-
       if (targetElement) {
-        // 使用 scrollIntoView 实现平滑滚动
         targetElement.scrollIntoView({
           behavior: 'smooth',
-          block: 'center' // 将目标元素滚动到视口的中间
+          block: 'center'
         });
-
-        // 处理完后重置状态，以便下次还能触发
         noteStore.scrollToNoteId = null;
       }
     }
   }
 });
 
-
 // --- 事件处理 ---
+
+// [新增] 背景点击处理
+const handleBackgroundClick = () => {
+  // 调用 store 的 deselectNote 方法，将 selectedNoteId 置为 null
+  // 这会触发右侧 Sidebar 切换回 "Chat" 模式
+  noteStore.deselectNote()
+}
+
+const handleSelectNote = (id) => {
+  // 这里直接调用 selectNote，store 中现在的逻辑是强制选中，不再 toggle
+  noteStore.selectNote(id)
+}
+
 const handleSave = async (payload) => {
   await noteStore.saveNote(payload)
   if (!noteStore.error) {
     smartEditorRef.value?.clearEditor()
   }
 }
+
 const handleEditStart = (note) => {
   noteStore.startEditing(note)
 }
+
 const handleCancelEdit = () => {
   noteStore.cancelEditing()
 }
+
 const handleDelete = async (id) => {
   await noteStore.deleteNote(id)
-}
-const handleSelectNote = (id) => {
-  noteStore.selectNote(id)
 }
 </script>
 
 <style lang="scss" scoped>
-/* 样式保持不变 */
 .stream-timeline {
   display: flex;
   flex-direction: column;
@@ -139,16 +161,21 @@ const handleSelectNote = (id) => {
 }
 
 .timeline-container {
-  flex: 1;
+  flex: 1; /* 占据剩余空间，确保空白区域可点击 */
   overflow-y: auto;
   padding: 0 10% 40px 10%;
   scroll-behavior: smooth;
+  cursor: default; /* 明确鼠标样式 */
 }
 
 .notes-list {
   display: flex;
   flex-direction: column;
   gap: 0;
+  /*
+     给列表增加一点最小高度，或者由 timeline-container 的 flex: 1 保证高度。
+     这里不需要额外设置，因为点击 list 内部的空隙也会冒泡到 container。
+  */
 }
 
 .state-msg {

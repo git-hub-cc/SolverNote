@@ -2,8 +2,14 @@
   <article
       class="note-card"
       :class="{ 'is-selected': isSelected }"
-      @click="$emit('select', note.id)"
+      @click.stop="$emit('select', note.id)"
   >
+    <!--
+      注意上面的 @click.stop：
+      这阻止了点击事件冒泡到外层的 StreamTimeline 容器。
+      如果不加 .stop，点击卡片会同时触发容器的背景点击事件，导致选中后立即被取消。
+    -->
+
     <!-- Meta Info -->
     <div class="note-header">
       <div class="meta-left">
@@ -14,7 +20,7 @@
         </div>
       </div>
 
-      <!-- [新增] 操作按钮 -->
+      <!-- 操作按钮 (阻止冒泡，避免误触选中逻辑) -->
       <div class="actions-group" @click.stop>
         <button class="action-btn" @click="$emit('edit', note)" title="Edit">
           <Edit2Icon class="icon-xs" />
@@ -26,7 +32,6 @@
     </div>
 
     <!-- Content Body -->
-    <!-- 使用新的 renderMarkdown (markdown-it) -->
     <div class="markdown-body" v-html="renderedContent"></div>
 
   </article>
@@ -36,7 +41,6 @@
 import { computed } from 'vue'
 import dayjs from 'dayjs'
 import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next'
-// [修改] 引用新的渲染器
 import { renderMarkdown } from '@/utils/markdownRenderer'
 
 const props = defineProps({
@@ -54,7 +58,6 @@ const formattedTime = computed(() => {
 })
 
 const renderedContent = computed(() => {
-  // 确保传入字符串
   return renderMarkdown(props.note.content || '')
 })
 </script>
@@ -71,8 +74,6 @@ const renderedContent = computed(() => {
 
   &:hover {
     border-color: var(--border-hover);
-
-    // 鼠标悬停时显示操作按钮
     .actions-group {
       opacity: 1;
     }
@@ -99,19 +100,13 @@ const renderedContent = computed(() => {
   color: var(--text-tertiary);
 }
 
-.tag-spacer {
-  margin: 0 6px;
-}
-
-.mini-tag {
-  color: var(--text-secondary);
-  margin-right: 6px;
-}
+.tag-spacer { margin: 0 6px; }
+.mini-tag { color: var(--text-secondary); margin-right: 6px; }
 
 .actions-group {
   display: flex;
   gap: 4px;
-  opacity: 0; /* 默认隐藏，Hover 显示 */
+  opacity: 0;
   transition: opacity 0.2s;
 }
 
@@ -120,50 +115,21 @@ const renderedContent = computed(() => {
   border-radius: 4px;
   color: var(--text-tertiary);
   cursor: pointer;
-
-  &:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-  }
-
-  &.danger:hover {
-    background: #FEF2F2;
-    color: var(--color-danger);
-  }
+  &:hover { background: var(--bg-hover); color: var(--text-primary); }
+  &.danger:hover { background: #FEF2F2; color: var(--color-danger); }
 }
 
-.icon-xs {
-  width: 14px;
-  height: 14px;
-}
+.icon-xs { width: 14px; height: 14px; }
 
-/* Markdown Body Reset */
 :deep(.markdown-body) {
   font-size: 15px;
   line-height: 1.6;
   color: var(--text-primary);
-
   p { margin-bottom: 0.75em; }
   p:last-child { margin-bottom: 0; }
-
   ul, ol { padding-left: 1.5em; margin-bottom: 0.75em; }
-
-  /* 简单的 wiki-link 样式 */
-  .wiki-link {
-    color: var(--color-brand);
-    font-weight: 500;
-    cursor: pointer;
-    background: var(--color-brand-light);
-    padding: 0 4px;
-    border-radius: 4px;
-  }
-
-  code {
-    background: var(--color-code-bg);
-    padding: 2px 5px;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 0.9em;
-  }
+  code { background: var(--color-code-bg); padding: 2px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.9em; }
+  /* Wiki Link Style */
+  .wiki-link { color: var(--color-brand); font-weight: 500; cursor: pointer; background: var(--color-brand-light); padding: 0 4px; border-radius: 4px; }
 }
 </style>

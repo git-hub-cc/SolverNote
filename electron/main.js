@@ -4,18 +4,15 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const chokidar = require('chokidar');
 const fs = require('fs-extra');
-// [新增] 引入 electron-log 用于结构化日志记录
-const log = require('electron-log');
+const log = require('electron-log'); // 引入日志模块
 
 // --- 日志配置 ---
-// 配置日志格式为 JSON，便于后续分析
 log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}';
-// 设置日志文件路径
 log.transports.file.resolvePath = () => path.join(app.getPath('userData'), 'logs/main.log');
-// 设置日志级别，可通过环境变量控制。生产环境默认为 'info'，开发环境为 'debug'。
 log.level = process.env.SOLVER_LOG_LEVEL || (app.isPackaged ? 'info' : 'debug');
 
-console.log = log.log; // 将 console.log 重定向到日志文件
+// 重定向 console 到文件日志
+console.log = log.log;
 console.error = log.error;
 console.warn = log.warn;
 console.info = log.info;
@@ -32,11 +29,11 @@ const modelManager = require('./services/modelManager');
 const llmService = require('./services/llmService');
 const vectorService = require('./services/vectorService');
 
-// 定义固定的模型文件名
+// 定义模型文件名
 const CHAT_MODEL_FILENAME = 'qwen1_5-0_5b-chat-q4_k_m.gguf';
 const EMBEDDING_MODEL_FILENAME = 'bge-small-en-v1.5.Q8_0.gguf';
 
-// 用于存储模型加载状态的全局变量
+// 全局状态
 const modelStatus = {
     chat: 'Uninitialized',
     embedding: 'Uninitialized'
@@ -44,16 +41,16 @@ const modelStatus = {
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
+let watcher = null;
 
+// --- 辅助函数 ---
 function getNotesDir() {
     const noteDir = path.join(process.cwd(), 'notes');
     fs.ensureDirSync(noteDir);
     return noteDir;
 }
 
-let watcher = null;
-
-// reindexAllNotes 函数保持不变
+// --- 核心业务函数 (保持不变) ---
 async function reindexAllNotes() {
     console.info('[AI] 开始对所有现有笔记进行全量重新索引...');
     try {
@@ -73,7 +70,6 @@ async function reindexAllNotes() {
     }
 }
 
-// setupFileWatcher 函数保持不变
 function setupFileWatcher() {
     const notesDir = getNotesDir();
     watcher = chokidar.watch(path.join(notesDir, '*.md'), {
@@ -103,9 +99,10 @@ function setupFileWatcher() {
     });
 }
 
-// initializeAIServices 函数保持不变
 async function initializeAIServices() {
     const modelsDir = modelManager.getModelsDir();
+
+    // 初始化聊天模型
     const chatModelPath = path.join(modelsDir, CHAT_MODEL_FILENAME);
     modelStatus.chat = 'Loading';
     console.info(`[AI] 正在检查聊天模型: ${chatModelPath}`);
@@ -126,6 +123,8 @@ async function initializeAIServices() {
         modelStatus.chat = 'Not Found';
         console.warn(`[AI] 未找到聊天模型: ${CHAT_MODEL_FILENAME}。请在设置中下载。`);
     }
+
+    // 初始化嵌入模型
     const embeddingModelPath = path.join(modelsDir, EMBEDDING_MODEL_FILENAME);
     modelStatus.embedding = 'Loading';
     console.info(`[AI] 正在检查嵌入模型: ${embeddingModelPath}`);
@@ -135,8 +134,8 @@ async function initializeAIServices() {
             if (success) {
                 modelStatus.embedding = 'Ready';
                 console.info('[AI] 嵌入模型和向量服务已准备就绪。');
-                await reindexAllNotes();
-                setupFileWatcher();
+                await reindexAllNotes(); // 启动时重建索引以确保数据最新
+                setupFileWatcher();     // 启动文件监听
             } else {
                 throw new Error('vectorService.initialize返回false');
             }
@@ -150,7 +149,6 @@ async function initializeAIServices() {
     }
 }
 
-// createWindow 函数保持不变
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -171,13 +169,12 @@ function createWindow() {
     }
 }
 
-
 // --- Electron 应用生命周期 ---
 app.whenReady().then(async () => {
     console.info('================ 应用启动 ================');
     console.info(`日志级别设置为: ${log.level}`);
 
-    // --- 注册所有 IPC 处理程序 ---
+    // --- 注册 IPC 处理程序 ---
     ipcMain.handle('notes:load', handleLoadNotes);
     ipcMain.handle('notes:save', handleSaveNote);
     ipcMain.handle('notes:search', handleSearchNotes);
@@ -188,38 +185,27 @@ app.whenReady().then(async () => {
         return modelManager.downloadModel(mainWindow, url, fileName);
     });
     ipcMain.handle('models:get-dir', modelManager.getModelsDir);
-    ipcMain.handle('models:get-status', () => {
-        return modelStatus;
-    });
+    ipcMain.handle('models:get-status', () => modelStatus);
 
     ipcMain.handle('llm:start-chat', (event, userPrompt, contextContent) => {
         llmService.startChatStream(mainWindow, userPrompt, contextContent);
     });
 
     /**
-     * [核心修改] 更新向量搜索的 IPC 处理器以接收和记录 Trace ID。
-     *
-     * @param {IpcMainInvokeEvent} event - IPC 事件对象。
-     * @param {object} args - 从渲染进程传递的参数对象。
-     * @param {string} args.queryText - 用户的搜索查询。
-     * @param {string} args.traceId - 用于追踪本次请求的唯一ID。
-     * @returns {Promise<Array<Object>>} - 搜索结果。
+     * [核心修改] 向量搜索 IPC 处理器
+     * 接收 excludeId 参数，用于传递给服务层进行过滤
      */
-    ipcMain.handle('vectors:search', (event, { queryText, traceId }) => {
-        // 使用结构化日志记录接收到的请求
+    ipcMain.handle('vectors:search', (event, { queryText, traceId, excludeId }) => {
         console.info(`[IPC][${traceId}] 收到向量搜索请求。`, {
-            payload: { queryText }
+            payload: { queryText: queryText?.substring(0, 50), excludeId }
         });
 
-        // 调用核心服务，并将 traceId 传递下去
-        // 注意：我们假设 vectorService.searchSimilarNotes 将被修改以接受 traceId
-        return vectorService.searchSimilarNotes(queryText, traceId);
+        // 调用服务层逻辑
+        return vectorService.searchSimilarNotes(queryText, traceId, excludeId);
     });
 
-    // 在创建窗口之前，先异步初始化所有 AI 服务
+    // 初始化服务并创建窗口
     await initializeAIServices();
-
-    // 创建主窗口
     createWindow();
 
     app.on('activate', () => {

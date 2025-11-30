@@ -1,6 +1,7 @@
 // electron/services/vectorService.js
 
 const path = require('path');
+const fs = require('fs'); // [新增] 引入 fs 模块用于校验文件存在性
 const { app } = require('electron');
 const matter = require('gray-matter');
 const log = require('electron-log');
@@ -16,7 +17,20 @@ let embeddingModel = null;
 let db = null;
 let table = null;
 
-// _initializeLlama, initialize, createEmbedding, indexNote, deleteNoteIndex 函数保持不变
+/**
+ * 内部辅助：获取笔记存储目录
+ * 确保与 handlers.js 中的逻辑一致
+ */
+function getNotesDir() {
+    const noteDir = path.join(process.cwd(), 'notes');
+    if (!fs.existsSync(noteDir)) {
+        fs.mkdirSync(noteDir, { recursive: true });
+    }
+    return noteDir;
+}
+
+// --- 初始化逻辑 ---
+
 async function _initializeLlama() {
     if (llama) return;
     try {
@@ -83,6 +97,8 @@ async function initialize(modelPath) {
         throw error;
     }
 }
+
+// --- 向量创建与索引逻辑 ---
 
 async function createEmbedding(text) {
     if (!embeddingModel) {
@@ -152,78 +168,118 @@ async function deleteNoteIndex(noteId) {
     }
 }
 
+// --- 核心搜索逻辑 (重点修改部分) ---
+
 /**
  * 根据查询文本，在 LanceDB 中搜索语义上相似的笔记文本块。
+ *
+ * 增强功能：
+ * 1. 幽灵数据清洗：自动检测并删除数据库中存在但文件系统中已不存在的索引。
+ * 2. 相似度熔断：如果内容相似度过高(>99.5%)，即使ID不同也视为重复内容过滤。
+ * 3. 严格ID过滤：使用 NFC 标准化确保跨平台文件名匹配准确。
+ *
  * @param {string} queryText - 用户的搜索查询。
  * @param {string} traceId - 用于追踪本次请求的唯一ID。
- * @param {number} [limit=5] - 返回结果的最大数量。
+ * @param {string} [excludeId] - (可选) 需要排除的笔记ID。
+ * @param {number} [targetLimit=5] - 最终返回给前端的非重复结果数量。
  * @returns {Promise<Array<Object>>} - 包含相似笔记片段信息的数组。
  */
-async function searchSimilarNotes(queryText, traceId, limit = 5) {
+async function searchSimilarNotes(queryText, traceId, excludeId, targetLimit = 5) {
     if (!table) {
         log.warn(`[Vector Service][${traceId}] 向量表未初始化，无法执行语义搜索。`);
         return [];
     }
     try {
+        const notesDir = getNotesDir();
+
         // --- 1. 生成查询向量 ---
-        log.debug(`[Vector Service][${traceId}] 正在为查询创建嵌入向量...`, {
-            payload: { queryText: `${queryText.substring(0, 50)}...` }
-        });
+        log.debug(`[Vector Service][${traceId}] 正在为查询创建嵌入向量...`);
         const queryVector = await createEmbedding(queryText);
-        log.debug(`[Vector Service][${traceId}] 查询向量创建成功。`, {
-            payload: {
-                vectorPreview: queryVector.slice(0, 5),
-                vectorDim: queryVector.length
+
+        // --- 2. 构造查询链 ---
+        // 策略：过量获取 (Over-fetching)，取 5 倍数量以应对过滤带来的损耗
+        const fetchLimit = targetLimit * 5;
+        let queryBuilder = table.search(queryVector).limit(fetchLimit);
+
+        // 标准化排除 ID (解决 macOS NFC/NFD 问题)
+        const normalizedExcludeId = excludeId ? excludeId.normalize('NFC') : null;
+
+        // 策略 A：数据库层过滤 (SQL Filtering)
+        // 这是一个“尽力而为”的优化
+        if (normalizedExcludeId) {
+            // 防止 SQL 注入的简单转义
+            const safeExcludeId = normalizedExcludeId.replace(/'/g, "''");
+            queryBuilder = queryBuilder.where(`"noteId" != '${safeExcludeId}'`);
+        }
+
+        // --- 3. 执行查询 ---
+        const rawResults = await queryBuilder.toArray();
+
+        // --- 4. 深度清洗与过滤 ---
+        const uniqueResults = [];
+        const seenNoteIds = new Set();
+
+        // 用于收集无效的幽灵 ID，搜索结束后批量删除
+        const ghostIdsToDelete = new Set();
+
+        for (const result of rawResults) {
+            const currentId = result.noteId;
+            const normalizedCurrentId = currentId.normalize('NFC');
+
+            // --- 过滤条件 1: ID 绝对匹配 ---
+            // 即使数据库 where 漏了，这里也要防守住
+            if (normalizedExcludeId && normalizedCurrentId === normalizedExcludeId) {
+                continue;
             }
-        });
 
-        // --- 2. 调用 LanceDB 搜索 ---
-        const searchParams = { limit, metric: 'l2' };
-        log.debug(`[Vector Service][${traceId}] 正在调用 LanceDB search 方法...`, {
-            payload: searchParams
-        });
+            // --- 过滤条件 2: 幽灵数据检测 (关键修复) ---
+            // 检查该 ID 对应的文件是否真的存在于磁盘上
+            // 解决问题：数据库里有 'note-OLD.md'，但磁盘上实际只有 'MyNote.md'
+            const fullPath = path.join(notesDir, currentId);
+            if (!fs.existsSync(fullPath)) {
+                log.warn(`[Vector Service][${traceId}] 发现幽灵索引: ${currentId} (文件不存在)。标记为自动清理。`);
+                ghostIdsToDelete.add(currentId);
+                continue; // 跳过此结果
+            }
 
-        // ======================= 核心修复 =======================
-        // 问题: `Array.fromAsync` 在当前 Node.js 环境中不可用。
-        // 修复: 使用 `for await...of` 循环来手动遍历异步迭代器，并将结果收集到一个数组中。
-        // 这是处理异步迭代器最通用和兼容性最好的方法。
+            // --- 过滤条件 3: 去重 ---
+            if (seenNoteIds.has(normalizedCurrentId)) continue;
 
-        const searchResultIterator = await table.search(queryVector)
-            .limit(limit)
-            .execute();
+            // --- 过滤条件 4: 相似度熔断 (关键修复) ---
+            // 如果 ID 不同，但相似度 > 99.5%，说明内容几乎完全一致。
+            // 这通常意味着这是一个改名残留的索引，或者完全一样的副本。
+            const similarityRaw = 1 - result._distance;
+            if (similarityRaw > 0.995) {
+                log.info(`[Vector Service][${traceId}] 排除过高相似度结果 (Sim: ${similarityRaw.toFixed(4)}), ID: ${currentId}`);
+                continue;
+            }
 
-        const searchResults = [];
-        for await (const result of searchResultIterator) {
-            searchResults.push(result);
-        }
-        // ==========================================================
-
-        // --- 3. 记录 LanceDB 的原始返回 ---
-        if (!Array.isArray(searchResults)) {
-            // 这个检查现在更像是一个额外的保障
-            log.error(`[Vector Service][${traceId}] LanceDB 返回了非预期的格式 (非数组)，即使在转换后。`, {
-                payload: { type: typeof searchResults, constructor: searchResults?.constructor?.name }
+            // --- 通过所有检查，加入结果 ---
+            seenNoteIds.add(normalizedCurrentId);
+            uniqueResults.push({
+                id: currentId,
+                snippet: result.text,
+                title: result.title,
+                similarity: Math.round(Math.max(0, similarityRaw) * 100)
             });
-            throw new Error('LanceDB search returned an unexpected format.');
+
+            if (uniqueResults.length >= targetLimit) break;
         }
 
-        log.debug(`[Vector Service][${traceId}] 从 LanceDB 接收到原始结果。`, {
-            payload: { rawResults: searchResults }
-        });
+        // --- 5. 异步清理幽灵数据 ---
+        if (ghostIdsToDelete.size > 0) {
+            // 不等待清理完成，直接返回结果，清理在后台进行
+            await (async () => {
+                for (const ghostId of ghostIdsToDelete) {
+                    await deleteNoteIndex(ghostId);
+                }
+                log.info(`[Vector Service] 后台已清理 ${ghostIdsToDelete.size} 条幽灵索引记录。`);
+            })();
+        }
 
-        // --- 4. 格式化结果 ---
-        const formattedResults = searchResults.map(r => ({
-            id: r.noteId,
-            snippet: r.text,
-            title: r.title,
-            similarity: Math.round(Math.max(0, 1 - r._distance) * 100)
-        }));
+        log.info(`[Vector Service][${traceId}] 搜索完成。返回 ${uniqueResults.length} 条有效结果。`);
 
-        log.debug(`[Vector Service][${traceId}] 结果已格式化，准备返回。`, {
-            payload: { formattedResults }
-        });
-
-        return formattedResults;
+        return uniqueResults;
 
     } catch (error) {
         log.error(`[Vector Service][${traceId}] 语义搜索过程中发生严重错误:`, error);

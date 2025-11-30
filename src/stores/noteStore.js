@@ -28,7 +28,7 @@ export const useNoteStore = defineStore('notes', {
         editingNote: null,
         isSyncing: false,
 
-        // [新增] 用于触发滚动到指定笔记的状态
+        // 用于触发滚动到指定笔记的状态
         scrollToNoteId: null
     }),
 
@@ -177,39 +177,49 @@ export const useNoteStore = defineStore('notes', {
             this.fetchNotes()
         },
 
+        /**
+         * [修改] 选中指定的笔记
+         * 移除了 "toggle" 逻辑，现在无论点击多少次，只要 ID 相同，
+         * 都会保持选中状态。这防止了意外取消选中的情况。
+         *
+         * @param {string} id 要选中的笔记 ID
+         */
         selectNote(id) {
-            this.selectedNoteId = id === this.selectedNoteId ? null : id
+            this.selectedNoteId = id
         },
 
         /**
-         * [新增] 触发滚动到指定笔记
-         * @param {string} noteId 要滚动到的笔记 ID
+         * [新增] 取消当前选中
+         * 用于在点击空白区域时调用，明确将状态重置为 null。
          */
-        scrollToNote(noteId) {
-            // 设置状态，由 StreamTimeline 组件监听并执行滚动
-            this.scrollToNoteId = noteId;
-
-            // 同时选中该笔记
-            this.selectedNoteId = noteId;
+        deselectNote() {
+            this.selectedNoteId = null
         },
 
-        /**
-         * [新增] 将文本插入到当前正在编辑的笔记中
-         * @param {string} textToInsert 要插入的文本
-         */
+        async scrollToNote(noteId) {
+            let targetExists = this.notes.some(n => n.id === noteId);
+
+            if (!targetExists && this.searchQuery) {
+                console.log(`[NoteStore] 目标笔记 ${noteId} 不在当前搜索结果中，正在切换回全量列表...`);
+                this.searchQuery = '';
+                await this.fetchNotes();
+                targetExists = this.notes.some(n => n.id === noteId);
+            }
+
+            if (targetExists) {
+                this.scrollToNoteId = noteId;
+                this.selectedNoteId = noteId;
+            } else {
+                console.warn(`[NoteStore] 无法跳转：即使在全量列表中也未找到 ID 为 ${noteId} 的笔记。`);
+            }
+        },
+
         insertTextIntoNote(textToInsert) {
-            // 如果不在编辑模式，则什么都不做
             if (!this.editingNote) {
                 alert('请先选择一篇笔记并进入编辑模式。');
                 return;
             }
-
-            // 在当前编辑内容的末尾追加文本
-            // 简单起见，这里总是在末尾追加一个换行和新内容
             this.editingNote.content += `\n\n${textToInsert}`;
-
-            // 由于 SmartEditor 通过 computed 属性 `editorContent` 监听 `editingNote.content`，
-            // 这里的修改会自动反映到编辑器中。
         }
     }
 })

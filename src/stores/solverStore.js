@@ -12,7 +12,6 @@ function generateTraceId() {
     return `trace-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 }
 
-
 export const useSolverStore = defineStore('solver', {
     state: () => ({
         mode: 'chat', // 'chat' | 'context'
@@ -27,7 +26,7 @@ export const useSolverStore = defineStore('solver', {
     }),
 
     actions: {
-        // setupListeners 和 cleanupListeners 保持不变
+        // --- 监听器设置与清理 (保持不变) ---
         setupListeners() {
             this.cleanupListeners();
             if (!window.electronAPI) return;
@@ -61,7 +60,7 @@ export const useSolverStore = defineStore('solver', {
 
         /**
          * 分析选中的笔记 (当 noteStore.selectedNoteId 变化时调用)
-         * [核心修改]: 在此函数中添加了完整的日志记录链路。
+         * [修改说明]: 增加 excludeId 参数传递，用于后端过滤当前笔记自身。
          */
         async analyzeContext(noteId) {
             // --- 1. 初始化流程 ---
@@ -97,9 +96,11 @@ export const useSolverStore = defineStore('solver', {
             }
 
             try {
-                // --- 2. 构造查询文本 (日志记录点) ---
+                // --- 2. 构造查询文本 ---
                 let queryText = '';
                 let querySource = 'unknown';
+
+                // 优先使用标题，如果没有标题则使用内容前200个字符
                 if (selectedNote.title && selectedNote.title.trim()) {
                     queryText = selectedNote.title;
                     querySource = 'title';
@@ -120,15 +121,23 @@ export const useSolverStore = defineStore('solver', {
                     return;
                 }
 
-                // --- 3. 调用后端进行语义搜索 (日志记录点) ---
-                console.debug(`[DEBUG][SolverStore][${traceId}] 正在通过 IPC 调用 'semanticSearch'。`, { queryText });
-                const results = await window.electronAPI.semanticSearch(queryText, traceId);
-                console.debug(`[DEBUG][SolverStore][${traceId}] 从 IPC 接收到原始搜索结果。`, { rawResults: results });
+                // --- 3. 调用后端进行语义搜索 ---
+                // [关键修改] 传递 excludeId (即当前 noteId) 给后端，用于排除自身
+                console.debug(`[DEBUG][SolverStore][${traceId}] 正在通过 IPC 调用 'semanticSearch'。`, { queryText, excludeId: noteId });
+
+                const results = await window.electronAPI.semanticSearch({
+                    queryText: queryText,
+                    traceId: traceId,
+                    excludeId: noteId // 传入当前 ID 以便后端过滤
+                });
+
+                console.debug(`[DEBUG][SolverStore][${traceId}] 从 IPC 接收到搜索结果。`, { resultCount: results?.length });
 
                 // --- 4. 处理并更新前端状态 ---
                 if (Array.isArray(results)) {
-                    this.relatedContexts = results.filter(result => result.id !== selectedNote.id);
-                    console.log(`[INFO][SolverStore][${traceId}] 搜索成功，找到 ${results.length} 个原始结果，过滤后展示 ${this.relatedContexts.length} 个。`);
+                    // 后端已经做过去重和排除自身处理，前端直接赋值即可
+                    this.relatedContexts = results;
+                    console.log(`[INFO][SolverStore][${traceId}] 搜索成功，展示 ${this.relatedContexts.length} 个结果。`);
                 } else {
                     console.error(`[ERROR][SolverStore][${traceId}] IPC 返回了非预期的格式。`, { received: results });
                     this.error = '智能关联返回数据格式错误。';
@@ -145,7 +154,7 @@ export const useSolverStore = defineStore('solver', {
             }
         },
 
-        // sendMessage 和 toggleMode 保持不变
+        // --- 聊天相关逻辑 (保持不变) ---
         async sendMessage(text) {
             if (!text || !text.trim() || this.isThinking) return;
             if (!window.electronAPI) {
