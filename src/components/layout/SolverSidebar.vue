@@ -1,9 +1,15 @@
 <template>
   <aside class="solver-sidebar">
-    <!-- Header: 标题与状态指示 -->
+    <!-- Header: 标题与状态指示 + 关闭按钮 -->
     <div class="solver-header">
-      <span class="title">{{ currentTitle }}</span>
-      <div class="status-dot" :class="{ active: solverStore.isThinking }"></div>
+      <div class="header-left">
+        <span class="title">{{ currentTitle }}</span>
+        <div class="status-dot" :class="{ active: solverStore.isThinking }"></div>
+      </div>
+
+      <button class="close-btn" @click="$emit('close')" title="关闭侧边栏">
+        <PanelRightCloseIcon class="icon-sm" />
+      </button>
     </div>
 
     <!-- Content Body: 聊天记录或上下文关联 -->
@@ -42,7 +48,7 @@
           未找到相关内容。
         </div>
         <div v-else>
-          <!-- 关键修改: 增加 @click 事件处理器 -->
+          <!-- 点击卡片跳转 -->
           <div
               v-for="ref in solverStore.relatedContexts"
               :key="ref.id"
@@ -51,7 +57,6 @@
               title="点击跳转到该笔记"
           >
             <div class="ref-header">
-              <!-- 关键修改: 优先显示 title，其次是 id -->
               <span class="ref-title">{{ ref.title || ref.id }}</span>
               <span class="ref-score">{{ ref.similarity }}%</span>
             </div>
@@ -90,12 +95,20 @@
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
 import { useSolverStore } from '@/stores/solverStore'
-import { useNoteStore } from '@/stores/noteStore' // 引入 noteStore
+import { useNoteStore } from '@/stores/noteStore'
 import { renderMarkdown } from '@/utils/markdownRenderer'
-import { Send as SendIcon, Copy as CopyIcon, CornerDownLeft as CornerDownLeftIcon } from 'lucide-vue-next'
+import {
+  Send as SendIcon,
+  Copy as CopyIcon,
+  CornerDownLeft as CornerDownLeftIcon,
+  PanelRightClose as PanelRightCloseIcon // [新增]
+} from 'lucide-vue-next'
+
+// [新增] 声明事件
+defineEmits(['close'])
 
 const solverStore = useSolverStore()
-const noteStore = useNoteStore() // 实例化
+const noteStore = useNoteStore()
 
 // --- 响应式引用 ---
 const chatInput = ref('')
@@ -143,7 +156,6 @@ const sendMessage = () => {
 
 // 点击关联卡片
 const handleRefCardClick = (noteId) => {
-  // 调用 noteStore 的 action 来处理跳转
   noteStore.scrollToNote(noteId)
 }
 
@@ -151,7 +163,6 @@ const handleRefCardClick = (noteId) => {
 const handleCopyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text)
-    // 可以在这里加一个短暂的 "已复制" 提示
   } catch (err) {
     console.error('复制失败:', err)
   }
@@ -159,7 +170,6 @@ const handleCopyToClipboard = async (text) => {
 
 // 将 AI 回复插入到当前笔记
 const handleInsertIntoNote = (text) => {
-  // 调用 noteStore 的 action 处理插入逻辑
   noteStore.insertTextIntoNote(text)
 }
 </script>
@@ -168,7 +178,7 @@ const handleInsertIntoNote = (text) => {
 .solver-sidebar {
   display: flex;
   flex-direction: column;
-  height: 100vh; // 确保填满整个高度
+  height: 100%; /* 这里依赖父容器的高度 */
   background-color: var(--bg-card);
 }
 
@@ -178,11 +188,18 @@ const handleInsertIntoNote = (text) => {
   border-bottom: 1px solid var(--border-light);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: space-between; /* [修改] 两端对齐 */
   padding: 0 16px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+
+/* [新增] 头部左侧组合 */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 
   .status-dot {
     width: 8px;
@@ -194,6 +211,23 @@ const handleInsertIntoNote = (text) => {
       background-color: #10B981;
       animation: pulse 2s infinite;
     }
+  }
+}
+
+/* [新增] 关闭按钮样式 */
+.close-btn {
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+
+  &:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-secondary);
   }
 }
 

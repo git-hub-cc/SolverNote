@@ -35,7 +35,7 @@
       </div>
     </section>
 
-    <!-- [核心修改] AI 服务状态面板 -->
+    <!-- AI 服务状态面板 -->
     <section class="settings-section">
       <h3 class="section-title">AI 服务状态</h3>
       <p class="section-description">
@@ -49,6 +49,7 @@
             <span class="status-model-name">qwen1_5-0_5b-chat-q4_k_m.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.chat)">
+            <!-- 修复：statusIcon 返回组件本身，不再包裹 ref -->
             <component :is="statusIcon(modelStatuses.chat)" class="icon-sm" />
             <span>{{ formatStatusText(modelStatuses.chat) }}</span>
           </div>
@@ -60,6 +61,7 @@
             <span class="status-model-name">bge-small-en-v1.5.Q8_0.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.embedding)">
+            <!-- 修复：statusIcon 返回组件本身，不再包裹 ref -->
             <component :is="statusIcon(modelStatuses.embedding)" class="icon-sm" />
             <span>{{ formatStatusText(modelStatuses.embedding) }}</span>
           </div>
@@ -81,7 +83,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, shallowRef } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import {
   DownloadCloudIcon,
   CheckCircle2Icon,
@@ -118,7 +120,7 @@ const downloadProgress = ref({});
 const globalError = ref('');
 const globalSuccess = ref('');
 
-// [新增] 存储从后端获取的模型状态
+// 存储从后端获取的模型状态
 const modelStatuses = ref({
   chat: 'Uninitialized',
   embedding: 'Uninitialized'
@@ -157,7 +159,7 @@ async function downloadModel(model) {
   try {
     await window.electronAPI.downloadModel(model.url, model.fileName);
     await fetchLocalModels();
-    // [增强] 提示用户需要重启
+    // 提示用户需要重启
     globalSuccess.value = `${model.fileName} 下载成功！请重启应用以加载新模型。`;
   } catch (error) {
     globalError.value = `下载 ${model.fileName} 失败: ${error.message}`;
@@ -195,14 +197,14 @@ const statusClass = (status) => {
   return map[status] || 'status-loading';
 };
 
-// 根据状态返回对应的图标组件 (使用 shallowRef 避免不必要的深度响应)
+// [修复] 根据状态直接返回对应的图标组件对象，不要包裹 shallowRef
 const statusIcon = (status) => {
   const map = {
-    'Ready': shallowRef(BrainCircuitIcon),
-    'Not Found': shallowRef(AlertTriangleIcon),
-    'Error': shallowRef(XCircleIcon)
+    'Ready': BrainCircuitIcon,
+    'Not Found': AlertTriangleIcon,
+    'Error': XCircleIcon
   };
-  return map[status] || shallowRef(LoaderCircleIcon);
+  return map[status] || LoaderCircleIcon;
 };
 
 // --- 生命周期钩子 ---
@@ -226,7 +228,7 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
-/* 视图和卡片的基本样式保持不变 */
+/* 视图和卡片的基本样式 */
 .settings-view {
   padding: 40px 10%;
   height: 100%;
@@ -305,7 +307,7 @@ onUnmounted(() => {
 .error-box { background: #FEF2F2; color: #B91C1C; border: 1px solid #FCA5A5; }
 .success-box { background: #F0FDF4; color: #15803D; border: 1px solid #86EFAC; }
 
-/* [新增] 状态面板样式 */
+/* 状态面板样式 */
 .status-panel {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
