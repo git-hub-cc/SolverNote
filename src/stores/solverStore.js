@@ -3,33 +3,31 @@
 import { defineStore } from 'pinia'
 import { useNoteStore } from './noteStore'
 
+/**
+ * [日志] 内部辅助函数，用于生成一个简单的唯一追踪ID。
+ * 在本地应用场景下，时间戳+随机数足以保证唯一性。
+ * @returns {string} 格式为 'trace-<timestamp>-<random>' 的字符串。
+ */
+function generateTraceId() {
+    return `trace-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+}
+
+
 export const useSolverStore = defineStore('solver', {
     state: () => ({
         mode: 'chat', // 'chat' | 'context'
         isThinking: false,
-
-        // 对话历史
         chatHistory: [
             { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。选中一篇笔记我会自动分析，你也可以直接向我提问。' }
         ],
-
-        // 智能关联 (Context)
         relatedContexts: [],
-
-        // 流式响应的文本缓冲区
         streamingText: '',
-
-        // 用于显示后端错误的字段
         error: null,
-
-        // 用于管理监听器的清理函数
         _listeners: []
     }),
 
     actions: {
-        /**
-         * 初始化并注册与 Electron 主进程的流式通信监听器
-         */
+        // setupListeners 和 cleanupListeners 保持不变
         setupListeners() {
             this.cleanupListeners();
             if (!window.electronAPI) return;
@@ -56,9 +54,6 @@ export const useSolverStore = defineStore('solver', {
             this._listeners.push(unsubscribeError);
         },
 
-        /**
-         * 清理所有活动的监听器
-         */
         cleanupListeners() {
             this._listeners.forEach(unsubscribe => unsubscribe());
             this._listeners = [];
@@ -66,10 +61,18 @@ export const useSolverStore = defineStore('solver', {
 
         /**
          * 分析选中的笔记 (当 noteStore.selectedNoteId 变化时调用)
+         * [核心修改]: 在此函数中添加了完整的日志记录链路。
          */
         async analyzeContext(noteId) {
+            // --- 1. 初始化流程 ---
+            const traceId = generateTraceId(); // 为本次请求生成唯一ID
+            const startTime = performance.now(); // 记录开始时间以计算总耗时
+
+            console.log(`[INFO][SolverStore][${traceId}] 智能关联分析流程启动。`, { noteId });
+
             if (!noteId) {
                 this.mode = 'chat';
+                console.log(`[INFO][SolverStore][${traceId}] 因 noteId 为空，切换回聊天模式。流程结束。`);
                 return;
             }
 
@@ -81,56 +84,68 @@ export const useSolverStore = defineStore('solver', {
             const noteStore = useNoteStore();
             const selectedNote = noteStore.notes.find(n => n.id === noteId);
 
-            if (!selectedNote || !window.electronAPI) {
+            if (!selectedNote) {
                 this.isThinking = false;
-                if (!window.electronAPI) console.warn('Electron API not found.');
+                console.warn(`[WARN][SolverStore][${traceId}] 未在 store 中找到 ID 为 ${noteId} 的笔记。流程中断。`);
+                return;
+            }
+
+            if (!window.electronAPI) {
+                this.isThinking = false;
+                console.warn(`[WARN][SolverStore][${traceId}] Electron API 未找到，无法执行搜索。流程中断。`);
                 return;
             }
 
             try {
-                // ======================================================================
-                // --- 核心 Bug 修复 ---
-                // 错误原因：将整篇笔记的长文本作为查询输入，超出了嵌入模型的上下文长度限制。
-                // 解决方案：构造一个更短、更有代表性的查询文本。
-                // 策略：优先使用笔记的标题。如果没有标题，则使用笔记内容的前 200 个字符。
-                // 这个长度（200个字符）对于嵌入模型来说是安全的。
-                // ======================================================================
-
+                // --- 2. 构造查询文本 (日志记录点) ---
                 let queryText = '';
-                // 优先使用笔记的标题作为查询文本
+                let querySource = 'unknown';
                 if (selectedNote.title && selectedNote.title.trim()) {
                     queryText = selectedNote.title;
+                    querySource = 'title';
                 } else if (selectedNote.content && selectedNote.content.trim()) {
-                    // 如果没有标题，则截取内容的前200个字符作为查询
                     queryText = selectedNote.content.substring(0, 200);
+                    querySource = 'content_snippet';
                 }
 
-                // 如果最终的查询文本为空，则不执行搜索
+                console.debug(`[DEBUG][SolverStore][${traceId}] 构造查询文本。`, {
+                    queryText,
+                    source: querySource
+                });
+
                 if (!queryText.trim()) {
                     this.relatedContexts = [];
                     this.isThinking = false;
+                    console.log(`[INFO][SolverStore][${traceId}] 查询文本为空，无需搜索。流程结束。`);
                     return;
                 }
 
-                console.log(`[SolverStore] 使用以下文本进行智能关联搜索: "${queryText}"`);
+                // --- 3. 调用后端进行语义搜索 (日志记录点) ---
+                console.debug(`[DEBUG][SolverStore][${traceId}] 正在通过 IPC 调用 'semanticSearch'。`, { queryText });
+                const results = await window.electronAPI.semanticSearch(queryText, traceId);
+                console.debug(`[DEBUG][SolverStore][${traceId}] 从 IPC 接收到原始搜索结果。`, { rawResults: results });
 
-                const results = await window.electronAPI.semanticSearch(queryText);
-
-                // [增强逻辑] 过滤掉与当前笔记自身完全相同的结果
-                this.relatedContexts = results.filter(result => result.id !== selectedNote.id);
+                // --- 4. 处理并更新前端状态 ---
+                if (Array.isArray(results)) {
+                    this.relatedContexts = results.filter(result => result.id !== selectedNote.id);
+                    console.log(`[INFO][SolverStore][${traceId}] 搜索成功，找到 ${results.length} 个原始结果，过滤后展示 ${this.relatedContexts.length} 个。`);
+                } else {
+                    console.error(`[ERROR][SolverStore][${traceId}] IPC 返回了非预期的格式。`, { received: results });
+                    this.error = '智能关联返回数据格式错误。';
+                    this.relatedContexts = [];
+                }
 
             } catch (err) {
-                console.error('Semantic search failed:', err);
-                this.error = '智能关联分析失败。';
+                console.error(`[ERROR][SolverStore][${traceId}] 智能关联搜索失败:`, err);
+                this.error = '智能关联分析失败，请检查后台日志。';
             } finally {
                 this.isThinking = false;
+                const durationMs = (performance.now() - startTime).toFixed(2);
+                console.log(`[INFO][SolverStore][${traceId}] 智能关联分析流程结束。总耗时: ${durationMs}ms。`);
             }
         },
 
-        /**
-         * 发送聊天消息
-         * @param {string} text - 用户输入的消息
-         */
+        // sendMessage 和 toggleMode 保持不变
         async sendMessage(text) {
             if (!text || !text.trim() || this.isThinking) return;
             if (!window.electronAPI) {

@@ -1,35 +1,27 @@
+// electron/preload.js
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    // --- 笔记操作 API ---
+    // --- 笔记操作 API (保持不变) ---
     loadNotes: () => ipcRenderer.invoke('notes:load'),
     saveNote: (noteData) => ipcRenderer.invoke('notes:save', noteData),
     searchNotes: (query) => ipcRenderer.invoke('notes:search', query),
     deleteNote: (id) => ipcRenderer.invoke('notes:delete', id),
 
-    // --- 模型管理 API ---
+    // --- 模型管理 API (保持不变) ---
     listLocalModels: () => ipcRenderer.invoke('models:list'),
     downloadModel: (url, fileName) => ipcRenderer.invoke('models:download', { url, fileName }),
     getModelsDir: () => ipcRenderer.invoke('models:get-dir'),
     onModelDownloadProgress: (callback) => {
         const handler = (event, data) => callback(data);
         ipcRenderer.on('model-download-progress', handler);
-        // 返回一个清理函数，以便 Vue 组件在卸载时可以移除监听器
         return () => ipcRenderer.removeListener('model-download-progress', handler);
     },
-
-    // --- [新增] 模型状态查询 API ---
-    // 这个函数将允许前端获取后端自动加载模型的结果。
     getModelsStatus: () => ipcRenderer.invoke('models:get-status'),
 
-    // --- LLM 聊天 API ---
-    // [移除] 不再需要 `loadLLM`，因为模型加载是自动的。
-    // loadLLM: (modelPath) => ipcRenderer.invoke('llm:load-model', modelPath),
-
-    // startChat 保持不变，但现在它依赖于后端已自动加载好的模型。
+    // --- LLM 聊天 API (保持不变) ---
     startChat: (prompt, contextContent) => ipcRenderer.invoke('llm:start-chat', prompt, contextContent),
-
-    // LLM 流式响应的监听器保持不变
     onLLMToken: (callback) => {
         const handler = (event, token) => callback(token);
         ipcRenderer.on('llm-token-stream', handler);
@@ -47,5 +39,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // --- 向量搜索 API ---
-    semanticSearch: (queryText) => ipcRenderer.invoke('vectors:search', queryText)
+    /**
+     * [核心修改] 修改 `semanticSearch` 函数签名以支持传递 Trace ID。
+     * 现在它接受一个对象 { queryText, traceId } 作为参数，而不是单个字符串。
+     *
+     * @param {string} queryText - 用户的搜索查询。
+     * @param {string} traceId - 用于追踪本次请求的唯一ID。
+     * @returns {Promise<Array<Object>>} - 包含相似笔记片段信息的数组。
+     */
+    semanticSearch: (queryText, traceId) => ipcRenderer.invoke('vectors:search', { queryText, traceId })
 });
