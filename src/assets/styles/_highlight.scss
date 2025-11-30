@@ -1,0 +1,24 @@
+/* src/assets/styles/_highlight.scss */
+
+/**
+ * highlight.js 主题管理
+ *
+ * 通过 Sass 的 @import 功能，将亮色和深色主题都打包到最终的 CSS 文件中。
+ * 利用 html.dark 选择器，实现纯 CSS 驱动的主题切换，无需 JS 动态加载。
+ * 这种方法完全兼容应用的 CSP 策略，并且可以离线工作。
+ */
+
+/*
+ * 默认主题 (亮色)
+ * 直接应用在 .hljs 选择器上。
+ */
+@import 'highlight.js/scss/atom-one-light.scss';
+
+/*
+ * 深色主题
+ * 仅当 <html> 标签具有 .dark 类时，这些样式才会生效。
+ * Sass 会自动将 atom-one-dark.scss 内部的所有规则嵌套在 html.dark 下。
+ */
+html.dark {
+  @import 'highlight.js/scss/atom-one-dark.scss';
+}

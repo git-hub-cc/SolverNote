@@ -49,34 +49,43 @@
     background: transparent;
   }
 
-  /* 代码 */
+  /* [修改] 代码样式调整，以兼容 highlight.js 主题 */
+
+  /* 1. 针对 "行内代码" 的样式 (非代码块) */
+  /*    这些样式保持不变，因为 hljs 不会处理它们 */
   code {
     padding: 0.2em 0.4em;
     margin: 0;
     font-size: 85%;
     font-family: var(--font-mono);
-    background-color: var(--color-code-bg);
+    background-color: var(--color-code-bg); // 保留背景色
     border-radius: 4px;
     color: var(--text-primary);
   }
 
+  /* 2. 针对 "代码块" (<pre>) 的容器样式 */
+  /*    我们移除背景色，让 hljs 主题来控制，但保留布局样式 */
   pre {
     padding: 16px;
     overflow: auto;
     font-size: 85%;
     line-height: 1.45;
-    background-color: var(--color-code-bg);
+    /* background-color: var(--color-code-bg); */ // [移除] 背景色由 hljs 主题提供
     border-radius: 6px;
     margin-bottom: 1em;
+    position: relative; // 用于可能的未来扩展，如 "复制" 按钮
 
+    /* 3. 针对 "代码块内部的 <code>" 标签 */
+    /*    这是 hljs 高亮内容实际存在的地方。我们需要重置它的样式，防止与 <pre> 冲突 */
     code {
-      padding: 0;
+      padding: 0; // [重置] 移除内边距，因为父级 pre 已经有了
       margin: 0;
-      font-size: 100%;
+      font-size: 100%; // 继承 pre 的字体大小
       word-break: normal;
       white-space: pre;
-      background: transparent;
+      background: transparent; // [重置] 必须设为透明，否则会覆盖 pre 的背景
       border: 0;
+      color: inherit; // 颜色由 hljs 的 span 标签控制
     }
   }
 
@@ -118,7 +127,7 @@
     background-color: var(--bg-hover);
   }
 
-  /* 自定义 Wiki Link 样式 (如果支持的话) */
+  /* 自定义 Wiki Link 样式  */
   .wiki-link {
     color: var(--color-brand);
     font-weight: 500;

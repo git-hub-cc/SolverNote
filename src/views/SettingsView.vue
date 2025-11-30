@@ -1,13 +1,54 @@
 <template>
   <div class="settings-view">
+    <!-- 1. 页面主标题 -->
     <div class="view-header">
-      <h2>AI 设置</h2>
-      <span class="sub-header">管理和配置您的本地 AI 模型。</span>
+      <h2>设置</h2>
+      <span class="sub-header">管理应用的外观和 AI 模型。</span>
     </div>
 
-    <!-- 推荐模型下载区域 -->
+    <!-- 2. [新增] 外观设置区域 -->
     <section class="settings-section">
-      <h3 class="section-title">推荐模型 (来自 ModelScope)</h3>
+      <h3 class="section-title">外观</h3>
+      <div class="setting-item">
+        <div class="setting-label">
+          <span class="label-title">主题</span>
+          <span class="label-desc">选择应用的界面颜色主题。</span>
+        </div>
+        <div class="setting-control">
+          <!-- 主题切换器，通过 uiStore 驱动 -->
+          <div class="theme-selector">
+            <button
+                class="theme-option"
+                :class="{ active: uiStore.themePreference === 'light' }"
+                @click="uiStore.setThemePreference('light')"
+                aria-label="切换到浅色主题"
+            >
+              <SunIcon class="icon-sm"/> 浅色
+            </button>
+            <button
+                class="theme-option"
+                :class="{ active: uiStore.themePreference === 'dark' }"
+                @click="uiStore.setThemePreference('dark')"
+                aria-label="切换到深色主题"
+            >
+              <MoonIcon class="icon-sm"/> 深色
+            </button>
+            <button
+                class="theme-option"
+                :class="{ active: uiStore.themePreference === 'system' }"
+                @click="uiStore.setThemePreference('system')"
+                aria-label="设置为跟随系统主题"
+            >
+              <LaptopIcon class="icon-sm"/> 跟随系统
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. AI 模型下载区域 -->
+    <section class="settings-section">
+      <h3 class="section-title">AI 模型</h3>
       <p class="section-description">
         应用依赖以下两个模型才能完整运行。如果状态显示“未找到”，请点击下载。
         <br>
@@ -27,7 +68,7 @@
               :disabled="isDownloading(model.fileName) || localModels.includes(model.fileName)">
             <!-- 根据不同状态显示不同图标和文本 -->
             <DownloadCloudIcon class="icon-sm" v-if="!isDownloading(model.fileName) && !localModels.includes(model.fileName)" />
-            <CheckCircle2Icon class="icon-sm success" v-if="localModels.includes(model.fileName)" />
+            <CheckCircle2Icon class="icon-sm success-icon" v-if="localModels.includes(model.fileName)" />
             <span v-if="isDownloading(model.fileName)">{{ downloadProgress[model.fileName] || 0 }}%</span>
             <span v-else>{{ localModels.includes(model.fileName) ? '已下载' : '下载' }}</span>
           </button>
@@ -35,7 +76,7 @@
       </div>
     </section>
 
-    <!-- AI 服务状态面板 -->
+    <!-- 4. AI 服务状态面板 -->
     <section class="settings-section">
       <h3 class="section-title">AI 服务状态</h3>
       <p class="section-description">
@@ -49,7 +90,6 @@
             <span class="status-model-name">qwen1_5-0_5b-chat-q4_k_m.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.chat)">
-            <!-- 修复：statusIcon 返回组件本身，不再包裹 ref -->
             <component :is="statusIcon(modelStatuses.chat)" class="icon-sm" />
             <span>{{ formatStatusText(modelStatuses.chat) }}</span>
           </div>
@@ -61,7 +101,6 @@
             <span class="status-model-name">bge-small-en-v1.5.Q8_0.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.embedding)">
-            <!-- 修复：statusIcon 返回组件本身，不再包裹 ref -->
             <component :is="statusIcon(modelStatuses.embedding)" class="icon-sm" />
             <span>{{ formatStatusText(modelStatuses.embedding) }}</span>
           </div>
@@ -69,7 +108,7 @@
       </div>
     </section>
 
-    <!-- 全局错误/成功提示框 -->
+    <!-- 5. 全局错误/成功提示框 -->
     <section class="settings-section">
       <div v-if="globalError" class="error-box">
         {{ globalError }}
@@ -84,16 +123,25 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
+// 引入 uiStore 用于主题切换
+import { useUIStore } from '@/stores/uiStore';
+// 引入所有需要的图标
 import {
   DownloadCloudIcon,
   CheckCircle2Icon,
   LoaderCircleIcon,
   AlertTriangleIcon,
   XCircleIcon,
-  BrainCircuitIcon
+  BrainCircuitIcon,
+  Sun as SunIcon,
+  Moon as MoonIcon,
+  Laptop as LaptopIcon
 } from 'lucide-vue-next';
 
-// --- 推荐模型列表 (保持不变) ---
+// 获取 uiStore 实例，用于在模板中直接访问和修改主题偏好
+const uiStore = useUIStore();
+
+// --- 推荐模型列表 ---
 const recommendedModels = [
   {
     name: 'Qwen1.5-0.5B-Chat',
@@ -119,13 +167,10 @@ const localModels = ref([]);
 const downloadProgress = ref({});
 const globalError = ref('');
 const globalSuccess = ref('');
-
-// 存储从后端获取的模型状态
 const modelStatuses = ref({
   chat: 'Uninitialized',
   embedding: 'Uninitialized'
 });
-
 let unsubscribeDownloadProgress = null;
 
 // --- 计算属性 ---
@@ -134,22 +179,18 @@ const isDownloading = computed(() => (fileName) => {
 });
 
 // --- 方法 ---
-
-// 获取本地已下载的模型列表
 async function fetchLocalModels() {
   if (window.electronAPI) {
     localModels.value = await window.electronAPI.listLocalModels();
   }
 }
 
-// 获取模型服务的实时状态
 async function fetchModelStatuses() {
   if (window.electronAPI) {
     modelStatuses.value = await window.electronAPI.getModelsStatus();
   }
 }
 
-// 下载模型
 async function downloadModel(model) {
   if (!window.electronAPI) return;
   globalError.value = '';
@@ -159,7 +200,6 @@ async function downloadModel(model) {
   try {
     await window.electronAPI.downloadModel(model.url, model.fileName);
     await fetchLocalModels();
-    // 提示用户需要重启
     globalSuccess.value = `${model.fileName} 下载成功！请重启应用以加载新模型。`;
   } catch (error) {
     globalError.value = `下载 ${model.fileName} 失败: ${error.message}`;
@@ -169,13 +209,11 @@ async function downloadModel(model) {
     setTimeout(() => {
       globalSuccess.value = '';
       globalError.value = '';
-    }, 8000); // 延长提示时间
+    }, 8000);
   }
 }
 
 // --- 状态展示辅助函数 ---
-
-// 格式化状态文本，使其对用户更友好
 const formatStatusText = (status) => {
   const map = {
     'Uninitialized': '正在初始化...',
@@ -187,7 +225,6 @@ const formatStatusText = (status) => {
   return map[status] || '未知状态';
 };
 
-// 根据状态返回对应的 CSS 类名
 const statusClass = (status) => {
   const map = {
     'Ready': 'status-success',
@@ -197,7 +234,6 @@ const statusClass = (status) => {
   return map[status] || 'status-loading';
 };
 
-// [修复] 根据状态直接返回对应的图标组件对象，不要包裹 shallowRef
 const statusIcon = (status) => {
   const map = {
     'Ready': BrainCircuitIcon,
@@ -228,7 +264,37 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
-/* 视图和卡片的基本样式 */
+/* 定义状态颜色变量，确保在亮色和深色模式下都能正常工作 */
+:root {
+  --color-success-bg: #F0FDF4;
+  --color-success-border: #86EFAC;
+  --color-success-text: #15803D;
+  --color-success-icon: #10B981;
+
+  --color-danger-bg: #FEF2F2;
+  --color-danger-border: #FCA5A5;
+  --color-danger-text: #B91C1C;
+
+  --color-warning-bg: #FFFBEB;
+  --color-warning-border: #FDE68A;
+  --color-warning-text: #B45309;
+}
+html.dark {
+  --color-success-bg: #052E16;
+  --color-success-border: #15803D;
+  --color-success-text: #6EE7B7;
+  --color-success-icon: #34D399;
+
+  --color-danger-bg: #450A0A;
+  --color-danger-border: #7F1D1D;
+  --color-danger-text: #F87171;
+
+  --color-warning-bg: #422006;
+  --color-warning-border: #92400E;
+  --color-warning-text: #FBBF24;
+}
+
+/* 页面整体布局 */
 .settings-view {
   padding: 40px 10%;
   height: 100%;
@@ -247,12 +313,68 @@ onUnmounted(() => {
 .section-title {
   font-size: 18px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 16px;
 }
+
+/* [新增] 外观设置项样式 */
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border-light);
+  &:first-of-type {
+    padding-top: 0;
+  }
+}
+.setting-label {
+  .label-title {
+    font-weight: 500;
+    color: var(--text-primary);
+    display: block;
+  }
+  .label-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+}
+.theme-selector {
+  display: flex;
+  background-color: var(--bg-hover);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  gap: 4px;
+}
+.theme-option {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  user-select: none;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &.active {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-card);
+  }
+}
+
+/* 模型管理区域样式 */
 .section-description {
   font-size: 13px;
   color: var(--text-secondary);
   margin-bottom: 24px;
+  line-height: 1.6;
 }
 .path-info {
   font-family: var(--font-mono);
@@ -296,18 +418,19 @@ onUnmounted(() => {
 
   &:hover { background: var(--border-light); color: var(--text-primary); }
   &:disabled { opacity: 0.6; cursor: not-allowed; }
-  .icon-sm { width: 16px; height: 16px; &.success { color: #10B981; } }
+  .icon-sm.success-icon { color: var(--color-success-icon); }
 }
+
+/* 状态面板和提示框样式 */
 .error-box, .success-box {
   margin-top: 20px;
   padding: 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
 }
-.error-box { background: #FEF2F2; color: #B91C1C; border: 1px solid #FCA5A5; }
-.success-box { background: #F0FDF4; color: #15803D; border: 1px solid #86EFAC; }
+.error-box { background: var(--color-danger-bg); color: var(--color-danger-text); border: 1px solid var(--color-danger-border); }
+.success-box { background: var(--color-success-bg); color: var(--color-success-text); border: 1px solid var(--color-success-border); }
 
-/* 状态面板样式 */
 .status-panel {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -326,16 +449,8 @@ onUnmounted(() => {
   background-color: var(--bg-app);
 }
 .status-info {
-  .status-name {
-    font-weight: 600;
-    font-size: 14px;
-    display: block;
-  }
-  .status-model-name {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-tertiary);
-  }
+  .status-name { font-weight: 600; font-size: 14px; display: block; }
+  .status-model-name { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 }
 .status-indicator {
   display: flex;
@@ -352,16 +467,16 @@ onUnmounted(() => {
     .icon-sm { animation: spin 1s linear infinite; }
   }
   &.status-success {
-    color: #166534; /* 深绿 */
-    background-color: #DCFCE7; /* 淡绿 */
+    color: var(--color-success-text);
+    background-color: var(--color-success-bg);
   }
   &.status-warning {
-    color: #9A3412; /* 深橙 */
-    background-color: #FFEDD5; /* 淡橙 */
+    color: var(--color-warning-text);
+    background-color: var(--color-warning-bg);
   }
   &.status-danger {
-    color: #991B1B; /* 深红 */
-    background-color: #FEE2E2; /* 淡红 */
+    color: var(--color-danger-text);
+    background-color: var(--color-danger-bg);
   }
 }
 

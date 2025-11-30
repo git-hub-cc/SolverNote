@@ -42,7 +42,6 @@ const noteStore = useNoteStore()
 const router = useRouter()
 
 // 确保进入页面时 store 中有数据
-// 如果是从首页进来通常已有数据，但如果是直接刷新此页则需要拉取
 onMounted(() => {
   if (noteStore.notes.length === 0) {
     noteStore.fetchNotes()
@@ -52,14 +51,8 @@ onMounted(() => {
 // 从 Store 获取处理好的标签统计列表
 const tagList = computed(() => noteStore.allTags)
 
-/**
- * 点击标签后的行为：
- * 1. 设置全局搜索词
- * 2. 跳转回首页 (StreamTimeline) 进行展示
- */
+// 点击标签后的行为
 const filterByTag = (tagName) => {
-  // 目前搜索逻辑是简单的文本匹配，所以直接搜索标签名即可
-  // 如果后端搜索支持特定语法 (如 tag:name)，这里需要相应修改
   noteStore.setSearchQuery(tagName)
   router.push('/')
 }
@@ -67,22 +60,9 @@ const filterByTag = (tagName) => {
 
 <style lang="scss" scoped>
 .tags-view {
-  padding: 40px 10%; /* 保持与主页类似的边距 */
+  padding: 40px 10%;
   height: 100%;
   overflow-y: auto;
-
-  /* 隐藏滚动条但保留功能 */
-  &::-webkit-scrollbar {
-    width: 6px;
-    background: transparent;
-  }
-  &::-webkit-scrollbar-thumb {
-    background: transparent;
-    border-radius: 3px;
-  }
-  &:hover::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.1);
-  }
 }
 
 .view-header {
@@ -117,26 +97,28 @@ const filterByTag = (tagName) => {
   .empty-icon {
     font-size: 48px;
     font-weight: bold;
-    color: var(--border-light);
+    /* [核心修改] 使用 text-tertiary 替代 border-light 以确保在深色模式下的可见性 */
+    color: var(--text-tertiary);
+    opacity: 0.5; /* 稍微降低透明度，使其更像一个背景装饰 */
     margin-bottom: 16px;
   }
 
   p {
     font-size: 16px;
     font-weight: 500;
+    color: var(--text-secondary); /* 使用二级文本色，使其比图标更突出 */
   }
 
   .sub-text {
     font-size: 13px;
     margin-top: 4px;
-    opacity: 0.8;
+    color: var(--text-tertiary);
   }
 }
 
 /* 网格布局 */
 .tags-grid {
   display: grid;
-  /* 响应式网格：最小宽度 160px，自动填充 */
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 16px;
 }
@@ -151,7 +133,7 @@ const filterByTag = (tagName) => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  height: 100px; /* 固定高度，整齐划一 */
+  height: 100px;
 
   &:hover {
     border-color: var(--color-brand);
@@ -168,7 +150,6 @@ const filterByTag = (tagName) => {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
-  /* 超长截断 */
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;

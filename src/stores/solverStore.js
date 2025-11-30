@@ -14,67 +14,76 @@ function generateTraceId() {
 
 export const useSolverStore = defineStore('solver', {
     state: () => ({
-        mode: 'chat', // 'chat' | 'context'
-        isThinking: false,
-        chatHistory: [
+        mode: 'chat', // 当前模式: 'chat' (聊天) | 'context' (智能关联)
+        isThinking: false, // AI 是否正在处理请求
+        chatHistory: [ // 聊天历史记录
             { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。选中一篇笔记我会自动分析，你也可以直接向我提问。' }
         ],
-        relatedContexts: [],
-        streamingText: '',
-        error: null,
-        _listeners: []
+        relatedContexts: [], // 智能关联找到的相关笔记片段
+        streamingText: '',   // 流式响应的当前文本
+        error: null,         // 错误信息
+        _listeners: []       // 用于存储 Electron IPC 事件的取消订阅函数
     }),
 
     actions: {
-        // --- 监听器设置与清理 (保持不变) ---
+        // --- 监听器设置与清理 ---
+
+        /**
+         * 设置 Electron IPC 事件监听器。
+         * 用于接收来自主进程的 LLM token 流、结束信号和错误信息。
+         */
         setupListeners() {
-            this.cleanupListeners();
+            this.cleanupListeners(); // 先清理旧的监听器，防止重复注册
             if (!window.electronAPI) return;
 
+            // 监听 token 流
             const unsubscribeToken = window.electronAPI.onLLMToken((token) => {
                 this.streamingText += token;
             });
             this._listeners.push(unsubscribeToken);
 
+            // 监听流结束信号
             const unsubscribeEnd = window.electronAPI.onLLMEnd(() => {
                 if (this.streamingText) {
+                    // 将完整的流式响应存入聊天历史
                     this.chatHistory.push({ role: 'ai', text: this.streamingText });
                 }
-                this.streamingText = '';
-                this.isThinking = false;
+                this.streamingText = ''; // 清空流式文本
+                this.isThinking = false; // 重置思考状态
             });
             this._listeners.push(unsubscribeEnd);
 
+            // 监听错误信号
             const unsubscribeError = window.electronAPI.onLLMError((errorMsg) => {
                 this.error = errorMsg;
                 this.isThinking = false;
-                setTimeout(() => { this.error = null; }, 5000);
+                setTimeout(() => { this.error = null; }, 5000); // 5秒后自动清除错误
             });
             this._listeners.push(unsubscribeError);
         },
 
+        /**
+         * 清理所有已注册的 IPC 监听器，防止内存泄漏。
+         */
         cleanupListeners() {
             this._listeners.forEach(unsubscribe => unsubscribe());
             this._listeners = [];
         },
 
         /**
-         * 分析选中的笔记 (当 noteStore.selectedNoteId 变化时调用)
-         * [修改说明]: 增加 excludeId 参数传递，用于后端过滤当前笔记自身。
+         * 分析选中的笔记，并触发智能关联搜索。
+         * @param {string} noteId - 被选中的笔记 ID。
          */
         async analyzeContext(noteId) {
-            // --- 1. 初始化流程 ---
             const traceId = generateTraceId(); // 为本次请求生成唯一ID
-            const startTime = performance.now(); // 记录开始时间以计算总耗时
-
-            console.log(`[INFO][SolverStore][${traceId}] 智能关联分析流程启动。`, { noteId });
+            console.log(`[SolverStore][${traceId}] 智能关联分析流程启动...`, { noteId });
 
             if (!noteId) {
-                this.mode = 'chat';
-                console.log(`[INFO][SolverStore][${traceId}] 因 noteId 为空，切换回聊天模式。流程结束。`);
+                this.mode = 'chat'; // 如果没有选中笔记，则切换回聊天模式
                 return;
             }
 
+            // 初始化状态
             this.mode = 'context';
             this.isThinking = true;
             this.relatedContexts = [];
@@ -83,106 +92,71 @@ export const useSolverStore = defineStore('solver', {
             const noteStore = useNoteStore();
             const selectedNote = noteStore.notes.find(n => n.id === noteId);
 
-            if (!selectedNote) {
+            if (!selectedNote || !window.electronAPI) {
                 this.isThinking = false;
-                console.warn(`[WARN][SolverStore][${traceId}] 未在 store 中找到 ID 为 ${noteId} 的笔记。流程中断。`);
-                return;
-            }
-
-            if (!window.electronAPI) {
-                this.isThinking = false;
-                console.warn(`[WARN][SolverStore][${traceId}] Electron API 未找到，无法执行搜索。流程中断。`);
                 return;
             }
 
             try {
-                // --- 2. 构造查询文本 ---
-                let queryText = '';
-                let querySource = 'unknown';
-
-                // 优先使用标题，如果没有标题则使用内容前200个字符
-                if (selectedNote.title && selectedNote.title.trim()) {
-                    queryText = selectedNote.title;
-                    querySource = 'title';
-                } else if (selectedNote.content && selectedNote.content.trim()) {
-                    queryText = selectedNote.content.substring(0, 200);
-                    querySource = 'content_snippet';
-                }
-
-                console.debug(`[DEBUG][SolverStore][${traceId}] 构造查询文本。`, {
-                    queryText,
-                    source: querySource
-                });
+                // 优先使用标题作为查询文本，否则使用内容摘要
+                let queryText = selectedNote.title?.trim() || selectedNote.content?.substring(0, 200);
 
                 if (!queryText.trim()) {
-                    this.relatedContexts = [];
                     this.isThinking = false;
-                    console.log(`[INFO][SolverStore][${traceId}] 查询文本为空，无需搜索。流程结束。`);
                     return;
                 }
 
-                // --- 3. 调用后端进行语义搜索 ---
-                // [关键修改] 传递 excludeId (即当前 noteId) 给后端，用于排除自身
-                console.debug(`[DEBUG][SolverStore][${traceId}] 正在通过 IPC 调用 'semanticSearch'。`, { queryText, excludeId: noteId });
-
+                // 调用 Electron 后端进行语义搜索，并排除当前笔记自身
                 const results = await window.electronAPI.semanticSearch({
                     queryText: queryText,
                     traceId: traceId,
-                    excludeId: noteId // 传入当前 ID 以便后端过滤
+                    excludeId: noteId
                 });
 
-                console.debug(`[DEBUG][SolverStore][${traceId}] 从 IPC 接收到搜索结果。`, { resultCount: results?.length });
-
-                // --- 4. 处理并更新前端状态 ---
                 if (Array.isArray(results)) {
-                    // 后端已经做过去重和排除自身处理，前端直接赋值即可
                     this.relatedContexts = results;
-                    console.log(`[INFO][SolverStore][${traceId}] 搜索成功，展示 ${this.relatedContexts.length} 个结果。`);
-                } else {
-                    console.error(`[ERROR][SolverStore][${traceId}] IPC 返回了非预期的格式。`, { received: results });
-                    this.error = '智能关联返回数据格式错误。';
-                    this.relatedContexts = [];
                 }
-
             } catch (err) {
-                console.error(`[ERROR][SolverStore][${traceId}] 智能关联搜索失败:`, err);
+                console.error(`[SolverStore][${traceId}] 智能关联搜索失败:`, err);
                 this.error = '智能关联分析失败，请检查后台日志。';
             } finally {
                 this.isThinking = false;
-                const durationMs = (performance.now() - startTime).toFixed(2);
-                console.log(`[INFO][SolverStore][${traceId}] 智能关联分析流程结束。总耗时: ${durationMs}ms。`);
             }
         },
 
-        // --- 聊天相关逻辑 (保持不变) ---
+        /**
+         * 发送聊天消息。
+         * @param {string} text - 用户输入的消息文本。
+         */
         async sendMessage(text) {
-            if (!text || !text.trim() || this.isThinking) return;
-            if (!window.electronAPI) {
-                this.error = 'AI 功能仅在桌面应用中可用。';
-                return;
-            }
+            if (!text.trim() || this.isThinking || !window.electronAPI) return;
 
             this.error = null;
-            this.chatHistory.push({ role: 'user', text });
+            this.chatHistory.push({ role: 'user', text }); // 将用户消息添加到历史记录
 
+            // 如果当前选中了笔记，则将其内容作为上下文
             const noteStore = useNoteStore();
-            const contextNote = noteStore.activeNote;
-            const contextContent = contextNote ? contextNote.content : null;
+            const contextContent = noteStore.activeNote ? noteStore.activeNote.content : null;
 
             this.streamingText = '';
             this.isThinking = true;
 
             try {
+                // 调用 Electron 后端开始聊天
                 await window.electronAPI.startChat(text, contextContent);
             } catch (err) {
-                console.error('Failed to start chat stream:', err);
+                console.error('无法开始聊天流:', err);
                 this.error = `无法开始对话: ${err.message}`;
                 this.isThinking = false;
             }
         },
 
-        toggleMode() {
-            this.mode = this.mode === 'chat' ? 'context' : 'chat';
+        /**
+         * [新增] 切换到聊天模式。
+         * 用于在“智能关联”视图中，通过点击按钮明确地返回聊天界面。
+         */
+        switchToChatMode() {
+            this.mode = 'chat';
         }
     }
 });

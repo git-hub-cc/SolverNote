@@ -1,6 +1,7 @@
 // electron/main.js
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+// [修改] 引入 nativeTheme
+const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');
 const path = require('path');
 const chokidar = require('chokidar');
 const fs = require('fs-extra');
@@ -50,7 +51,7 @@ function getNotesDir() {
     return noteDir;
 }
 
-// --- 核心业务函数 (保持不变) ---
+// --- 核心业务函数  ---
 async function reindexAllNotes() {
     console.info('[AI] 开始对所有现有笔记进行全量重新索引...');
     try {
@@ -161,6 +162,14 @@ function createWindow() {
         }
     });
 
+    // [新增] 监听系统主题变化，并通知渲染进程
+    nativeTheme.on('updated', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+            mainWindow.webContents.send('theme:updated', theme);
+        }
+    });
+
     if (isDev) {
         mainWindow.loadURL('http://localhost:5173');
         mainWindow.webContents.openDevTools();
@@ -191,18 +200,18 @@ app.whenReady().then(async () => {
         llmService.startChatStream(mainWindow, userPrompt, contextContent);
     });
 
-    /**
-     * [核心修改] 向量搜索 IPC 处理器
-     * 接收 excludeId 参数，用于传递给服务层进行过滤
-     */
     ipcMain.handle('vectors:search', (event, { queryText, traceId, excludeId }) => {
         console.info(`[IPC][${traceId}] 收到向量搜索请求。`, {
             payload: { queryText: queryText?.substring(0, 50), excludeId }
         });
-
-        // 调用服务层逻辑
         return vectorService.searchSimilarNotes(queryText, traceId, excludeId);
     });
+
+    // [新增] 注册获取系统主题的 IPC 处理器
+    ipcMain.handle('theme:get-system', () => {
+        return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+    });
+
 
     // 初始化服务并创建窗口
     await initializeAIServices();

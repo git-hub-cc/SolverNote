@@ -3,8 +3,11 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 
+// [核心修改] 移除静态导入的 highlight.js 主题文件
+// 主题将由 App.vue 根据当前亮/暗模式动态加载
+// import 'highlight.js/styles/atom-one-dark.css'
+
 // 引入全局样式 (Sass)
-// 注意：这些文件将在 Part 3 中详细定义
 import './assets/styles/main.scss'
 
 const app = createApp(App)

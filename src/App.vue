@@ -1,41 +1,21 @@
 <template>
   <div class="app-layout">
-    <!-- 左侧导航 -->
+    <!-- 模板部分保持不变 -->
     <NavigationRail class="layout-nav" />
-
-    <!-- 中间主内容区 -->
     <main class="layout-main">
-      <!--
-        [新增] 侧边栏打开按钮
-        仅当侧边栏关闭时显示，绝对定位在右上角
-      -->
       <transition name="fade">
-        <button
-            v-if="!isSidebarOpen"
-            class="sidebar-toggle-btn"
-            @click="toggleSidebar"
-            title="Open AI Sidebar"
-        >
+        <button v-if="!isSidebarOpen" class="sidebar-toggle-btn" @click="toggleSidebar" title="Open AI Sidebar">
           <PanelRightOpenIcon class="icon" />
         </button>
       </transition>
-
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
           <component :is="Component" />
         </transition>
       </router-view>
     </main>
-
-    <!-- 右侧 AI 侧边栏 -->
-    <!--
-      [修改] 使用动态类名控制宽度，而不是 v-if，以支持 CSS transition
-    -->
     <div class="sidebar-wrapper" :class="{ 'is-collapsed': !isSidebarOpen }">
-      <SolverSidebar
-          class="layout-sidebar"
-          @close="isSidebarOpen = false"
-      />
+      <SolverSidebar class="layout-sidebar" @close="isSidebarOpen = false" />
     </div>
   </div>
 </template>
@@ -46,44 +26,63 @@ import NavigationRail from '@/components/layout/NavigationRail.vue'
 import SolverSidebar from '@/components/layout/SolverSidebar.vue'
 import { useNoteStore } from '@/stores/noteStore'
 import { useSolverStore } from '@/stores/solverStore'
-import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next' // [新增] 引入图标
+import { useUIStore } from '@/stores/uiStore'
+import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next'
 
 const noteStore = useNoteStore()
 const solverStore = useSolverStore()
+const uiStore = useUIStore()
 
-// [新增] 控制侧边栏状态
 const isSidebarOpen = ref(true)
 
 const toggleSidebar = () => {
   isSidebarOpen.value = !isSidebarOpen.value
 }
 
-// 核心联动逻辑
-watch(
-    () => noteStore.selectedNoteId,
-    (newId) => {
-      // [新增] 当用户选中笔记时，自动打开侧边栏 (符合直觉的交互)
-      if (newId) {
-        isSidebarOpen.value = true
-        solverStore.analyzeContext(newId)
-      } else {
-        // 可选：当取消选中时，是否自动关闭？通常保持打开或维持原状更好。
-        // 这里维持原状，不做操作。
-      }
-    }
-)
+// 核心联动逻辑 (保持不变)
+watch(() => noteStore.selectedNoteId, (newId) => {
+  if (newId) {
+    isSidebarOpen.value = true
+    solverStore.analyzeContext(newId)
+  }
+})
 
-onMounted(() => {
-  solverStore.setupListeners()
+// --- [核心修改] 主题管理逻辑 ---
+
+// [移除] 不再需要 `updateHljsTheme` 函数，因为主题切换现在是纯 CSS 实现。
+
+// [修改] watch 回调现在变得极其简单，只负责在 <html> 标签上添加或移除 .dark 类。
+watch(() => uiStore.effectiveTheme, (newTheme) => {
+  const root = document.documentElement;
+  if (newTheme === 'dark') {
+    root.classList.add('dark');
+  } else {
+    root.classList.remove('dark');
+  }
+  // [移除] 不再需要在这里调用 updateHljsTheme
+}, {
+  immediate: true
+});
+
+onMounted(async () => {
+  solverStore.setupListeners();
+
+  // (此部分保持不变)
+  // 调用 uiStore 的初始化方法，它会处理所有与 Electron 的通信
+  uiStore.initializeTheme();
 })
 
 onUnmounted(() => {
-  solverStore.cleanupListeners()
+  solverStore.cleanupListeners();
+
+  // (此部分保持不变)
+  // 调用 uiStore 的清理方法
+  uiStore.cleanup();
 })
 </script>
 
 <style scoped>
-/* App 级布局容器 */
+/* (所有样式保持不变) */
 .app-layout {
   display: flex;
   height: 100vh;
@@ -92,49 +91,41 @@ onUnmounted(() => {
   background-color: var(--bg-app);
   color: var(--text-primary);
 }
-
 .layout-nav {
   flex-shrink: 0;
   width: 240px;
   border-right: 1px solid var(--border-light);
-  z-index: 10; /* 确保层级 */
+  z-index: 10;
+  background-color: var(--bg-sidebar);
 }
-
 .layout-main {
   flex: 1;
-  position: relative; /* 为绝对定位的 Toggle 按钮提供锚点 */
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-
-/* [新增] 侧边栏包装器 & 动画逻辑 */
 .sidebar-wrapper {
   flex-shrink: 0;
-  width: 320px; /* 默认宽度 */
-  overflow: hidden; /* 隐藏折叠时的内容 */
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 平滑过渡 */
+  width: 320px;
+  overflow: hidden;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border-left: 1px solid var(--border-light);
   background-color: var(--bg-card);
 }
-
 .sidebar-wrapper.is-collapsed {
   width: 0;
-  border-left: 1px solid transparent; /* 折叠时隐藏边框 */
+  border-left: 1px solid transparent;
 }
-
-/* 强制 Sidebar 保持宽度，防止折叠时内容被挤压 */
 .layout-sidebar {
   width: 320px;
   height: 100%;
 }
-
-/* [新增] 悬浮打开按钮样式 */
 .sidebar-toggle-btn {
   position: absolute;
   top: 16px;
   right: 16px;
-  z-index: 50; /* 确保在编辑器之上 */
+  z-index: 50;
   width: 32px;
   height: 32px;
   border-radius: 6px;
@@ -148,19 +139,15 @@ onUnmounted(() => {
   box-shadow: var(--shadow-card);
   transition: all 0.2s;
 }
-
 .sidebar-toggle-btn:hover {
   background-color: var(--bg-hover);
   color: var(--color-brand);
   border-color: var(--border-hover);
 }
-
-/* 简单的路由切换动画 */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
 }
-
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;

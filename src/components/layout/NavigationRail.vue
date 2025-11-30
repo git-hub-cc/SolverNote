@@ -8,11 +8,6 @@
 
     <!-- Main Menu -->
     <nav class="nav-menu">
-      <!--
-        --- 关键修改 ---
-        将 <router-link> 改为 <a> 标签，并添加 click 事件处理器
-        以在导航前主动清空搜索状态。
-      -->
       <a
           href="#"
           class="nav-item"
@@ -56,21 +51,17 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useNoteStore } from '@/stores/noteStore'
-// [新增] 引入 useRouter 和 useRoute 用于导航和状态判断
 import { useRouter, useRoute } from 'vue-router'
-// 这里简写了 Icon 引入，实际项目中建议封装一个 Icon 组件
-import { Brain as BrainIcon, Calendar as CalendarIcon, Search as SearchIcon, Hash as HashIcon, Settings as SettingsIcon } from 'lucide-vue-next' // 推荐使用 lucide-vue-next 图标库，或者自己封装 SVG
+import { Brain as BrainIcon, Calendar as CalendarIcon, Search as SearchIcon, Hash as HashIcon, Settings as SettingsIcon } from 'lucide-vue-next'
 
 const noteStore = useNoteStore()
 const searchQuery = ref('')
 const isSearchFocused = ref(false)
 let debounceTimer = null
 
-// [新增] 获取 router 和 route 实例
 const router = useRouter()
 const route = useRoute()
 
-// [新增] 计算属性，用于手动控制 'Today' 链接的 active 状态
 const isHomeActive = computed(() => route.path === '/')
 
 // 监听输入并防抖触发 Store 搜索
@@ -85,11 +76,9 @@ const clearSearch = () => {
   searchQuery.value = ''
 }
 
-// [新增] "Today" 链接的点击事件处理器
+// "Today" 链接的点击事件处理器
 const handleGoHome = () => {
-  // 1. 清空搜索查询词，这将触发 noteStore 重新加载所有笔记
   noteStore.setSearchQuery('')
-  // 2. 确保路由跳转到主页
   router.push('/')
 }
 </script>
@@ -99,6 +88,8 @@ const handleGoHome = () => {
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
+  /* 导航栏使用独立的背景色，确保在深色模式下能与主区域区分 */
+  background-color: var(--bg-sidebar);
 }
 
 .nav-header {
@@ -131,7 +122,6 @@ const handleGoHome = () => {
   font-size: 14px;
   font-weight: 500;
   transition: all 0.2s;
-  // [新增] cursor: pointer for <a> tag
   cursor: pointer;
 
   &:hover {
@@ -167,9 +157,11 @@ const handleGoHome = () => {
   transition: all 0.2s;
 
   &.focused {
-    background: #fff;
+    /* [核心修改 1/2] 使用 var(--bg-card) 替代 #fff，以适配深色模式 */
+    background: var(--bg-card);
     border-color: var(--color-brand);
-    box-shadow: 0 0 0 2px var(--color-brand-light);
+    /* [核心修改 2/2] 使用 var(--bg-active) 作为光晕颜色，确保在两种主题下都可见且不突兀 */
+    box-shadow: 0 0 0 2px var(--bg-active);
   }
 
   .search-icon {

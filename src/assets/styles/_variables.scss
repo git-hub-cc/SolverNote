@@ -9,7 +9,7 @@
 
   /* 文本色 */
   --text-primary: #111827;   /* 正文黑 */
-  --text-secondary: #4B5563; /* 辅助灰 - 稍微加深一点以提高对比度 */
+  --text-secondary: #4B5563; /* 辅助灰 */
   --text-tertiary: #9CA3AF;  /* 极淡灰 */
 
   /* 边框色 */
@@ -31,8 +31,6 @@
 
   /* --- 排版 Typography --- */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-
-  /* [修改] 优化等宽字体栈，用于源码编辑模式 */
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Menlo', 'Monaco', 'Courier New', monospace;
 
   /* --- 尺寸 Spacing & Sizing --- */
@@ -44,18 +42,42 @@
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-float: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 
-  /* [新增] 预览模式/Tab切换的过渡动画 */
+  /* 过渡动画 */
   --transition-fast: all 0.2s ease;
 }
 
-/* 深色模式支持 (预留) */
+/* [核心修改] 深色模式变量 */
 html.dark {
-  --bg-app: #111827;
-  --bg-sidebar: #0B0F19;
-  --bg-card: #1F2937;
-  --text-primary: #F9FAFB;
-  --text-secondary: #9CA3AF;
-  --border-light: #374151;
-  --bg-hover: #374151;
-  --color-code-bg: #2D3748;
+  /* 背景色 */
+  --bg-app: #111827;      /* Slate-900 */
+  --bg-sidebar: #1F2937;  /* Slate-800 (与卡片背景一致，或略有区分) */
+  --bg-card: #1F2937;     /* Slate-800 */
+  --bg-hover: #374151;    /* Slate-700 */
+  --bg-active: #4B5563;   /* Slate-600 */
+
+  /* 文本色 */
+  --text-primary: #F3F4F6;   /* Gray-200 */
+  --text-secondary: #9CA3AF; /* Gray-400 */
+  --text-tertiary: #6B7280;  /* Gray-500 */
+
+  /* 边框色 */
+  --border-light: #374151;   /* Slate-700 */
+  --border-hover: #4B5563;   /* Slate-600 */
+
+  /* 功能色 */
+  --color-brand: #818CF8;         /* Indigo-400 */
+  --color-brand-light: #312E81;  /* Indigo-900 (作为背景) */
+  --color-brand-hover: #A5B4FC;  /* Indigo-300 */
+  --color-danger: #F87171;      /* Red-400 */
+  --color-code-bg: #0F172A;     /* Slate-950 */
+
+  /* 标签色 */
+  --tag-bg-blue: #1E3A8A;
+  --tag-text-blue: #BFDBFE;
+  --tag-bg-purple: #581C87;
+  --tag-text-purple: #E9D5FF;
+
+  /* 效果 */
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
+  --shadow-float: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }

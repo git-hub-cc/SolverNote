@@ -1,7 +1,10 @@
+/* src/assets/styles/main.scss */
+
 @import 'variables';
 @import 'reset';
-/* [新增] 引入 Markdown 专用样式 */
 @import 'markdown';
+/* [核心修改] 引入我们新建的 highlight.js 主题管理文件 */
+@import 'highlight';
 
 /* 全局工具类 */
 .icon {
@@ -26,10 +29,7 @@
   100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
 }
 
-/*
-  全局滚动条美化
-  虽然 _reset.scss 里可能有，但在这里强制统一一次
-*/
+/* 全局滚动条美化 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -40,7 +40,7 @@
 ::-webkit-scrollbar-thumb {
   background-color: rgba(156, 163, 175, 0.3);
   border-radius: 4px;
-  border: 2px solid transparent; /* 制造 padding 效果 */
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {

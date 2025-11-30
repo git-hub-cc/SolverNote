@@ -1,6 +1,6 @@
 <template>
   <aside class="solver-sidebar">
-    <!-- Header: 标题与状态指示 + 关闭按钮 -->
+    <!-- 头部: 标题与状态指示 + 关闭按钮 -->
     <div class="solver-header">
       <div class="header-left">
         <span class="title">{{ currentTitle }}</span>
@@ -12,7 +12,7 @@
       </button>
     </div>
 
-    <!-- Content Body: 聊天记录或上下文关联 -->
+    <!-- 内容主体: 聊天记录或上下文关联 -->
     <div class="solver-content" ref="contentAreaRef">
       <!-- 1. 聊天模式 -->
       <div v-if="solverStore.mode === 'chat'" class="chat-view">
@@ -66,15 +66,17 @@
       </div>
     </div>
 
-    <!-- Footer: 错误提示与聊天输入框 -->
+    <!-- 底部: 错误提示与输入区域 -->
     <footer class="solver-footer">
       <!-- 错误提示 -->
       <div v-if="solverStore.error" class="solver-error-box">
         <p>{{ solverStore.error }}</p>
       </div>
 
-      <!-- 聊天输入区域 -->
-      <div class="chat-input-area">
+      <!-- [核心修改] 根据模式条件渲染输入框或切换按钮 -->
+
+      <!-- 1. 聊天模式下，显示输入框 -->
+      <div v-if="solverStore.mode === 'chat'" class="chat-input-area">
         <textarea
             ref="textareaRef"
             v-model="chatInput"
@@ -88,6 +90,14 @@
           <SendIcon class="icon-sm" />
         </button>
       </div>
+
+      <!-- 2. 上下文模式下，显示切换到聊天的按钮 -->
+      <div v-else class="context-actions">
+        <button class="switch-to-chat-btn" @click="handleSwitchToChat">
+          <MessageSquarePlusIcon class="icon-sm"/>
+          <span>向 AI 提问</span>
+        </button>
+      </div>
     </footer>
   </aside>
 </template>
@@ -97,30 +107,30 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useSolverStore } from '@/stores/solverStore'
 import { useNoteStore } from '@/stores/noteStore'
 import { renderMarkdown } from '@/utils/markdownRenderer'
+// [新增] 引入 MessageSquarePlusIcon 图标
 import {
   Send as SendIcon,
   Copy as CopyIcon,
   CornerDownLeft as CornerDownLeftIcon,
-  PanelRightClose as PanelRightCloseIcon // [新增]
+  PanelRightClose as PanelRightCloseIcon,
+  MessageSquarePlus as MessageSquarePlusIcon
 } from 'lucide-vue-next'
 
-// [新增] 声明事件
 defineEmits(['close'])
 
+// Store 实例
 const solverStore = useSolverStore()
 const noteStore = useNoteStore()
 
-// --- 响应式引用 ---
+// 响应式引用
 const chatInput = ref('')
 const textareaRef = ref(null)
 const contentAreaRef = ref(null)
 
-// --- 计算属性 ---
+// 计算属性，根据模式返回不同标题
 const currentTitle = computed(() => {
   return solverStore.mode === 'chat' ? '智能助手 (Solver)' : '智能关联 (Context)'
 })
-
-// --- DOM 操作与副作用 ---
 
 // 自动调整文本框高度
 const autoResizeTextarea = () => {
@@ -138,28 +148,26 @@ watch(() => [solverStore.chatHistory.length, solverStore.streamingText], async (
   }
 }, { deep: true })
 
-
-// --- 事件处理器 ---
-
 // 发送消息
 const sendMessage = () => {
   const text = chatInput.value.trim()
   if (!text || solverStore.isThinking) return
-
-  // 调用 store 的 action
   solverStore.sendMessage(text)
-
-  // 清空输入框并重置高度
   chatInput.value = ''
   nextTick(autoResizeTextarea)
 }
 
-// 点击关联卡片
+// [新增] 处理切换到聊天模式的事件
+const handleSwitchToChat = () => {
+  solverStore.switchToChatMode();
+}
+
+// 点击关联卡片，跳转到对应笔记
 const handleRefCardClick = (noteId) => {
   noteStore.scrollToNote(noteId)
 }
 
-// 复制 AI 回复
+// 复制 AI 回答到剪贴板
 const handleCopyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text)
@@ -168,17 +176,29 @@ const handleCopyToClipboard = async (text) => {
   }
 }
 
-// 将 AI 回复插入到当前笔记
+// 将 AI 回答插入到当前正在编辑的笔记中
 const handleInsertIntoNote = (text) => {
   noteStore.insertTextIntoNote(text)
 }
 </script>
 
 <style lang="scss" scoped>
+// 主题变量 (用于错误提示框)
+:root {
+  --color-danger-bg: #FEF2F2;
+  --color-danger-border: #FCA5A5;
+  --color-danger-text: #B91C1C;
+}
+html.dark {
+  --color-danger-bg: #450A0A;
+  --color-danger-border: #7F1D1D;
+  --color-danger-text: #F87171;
+}
+
 .solver-sidebar {
   display: flex;
   flex-direction: column;
-  height: 100%; /* 这里依赖父容器的高度 */
+  height: 100%;
   background-color: var(--bg-card);
 }
 
@@ -188,14 +208,13 @@ const handleInsertIntoNote = (text) => {
   border-bottom: 1px solid var(--border-light);
   display: flex;
   align-items: center;
-  justify-content: space-between; /* [修改] 两端对齐 */
+  justify-content: space-between;
   padding: 0 16px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-/* [新增] 头部左侧组合 */
 .header-left {
   display: flex;
   align-items: center;
@@ -214,7 +233,6 @@ const handleInsertIntoNote = (text) => {
   }
 }
 
-/* [新增] 关闭按钮样式 */
 .close-btn {
   color: var(--text-tertiary);
   cursor: pointer;
@@ -264,7 +282,6 @@ const handleInsertIntoNote = (text) => {
     background: var(--bg-hover);
     color: var(--text-primary);
 
-    // 悬停时显示操作按钮
     &:hover .bubble-actions {
       opacity: 1;
     }
@@ -277,7 +294,7 @@ const handleInsertIntoNote = (text) => {
   right: 0;
   display: flex;
   gap: 4px;
-  background: white;
+  background: var(--bg-card);
   padding: 4px;
   border-radius: 6px;
   box-shadow: var(--shadow-float);
@@ -297,7 +314,7 @@ const handleInsertIntoNote = (text) => {
 
 /* --- 上下文视图样式 --- */
 .context-meta { font-size: 11px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 8px; }
-.ref-card { background: var(--bg-app); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 12px; cursor: pointer; transition: all 0.2s; &:hover { background: #fff; border-color: var(--color-brand-light); box-shadow: var(--shadow-card); transform: translateY(-1px); } }
+.ref-card { background: var(--bg-app); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 12px; cursor: pointer; transition: all 0.2s; &:hover { background: var(--bg-card); border-color: var(--color-brand-light); box-shadow: var(--shadow-card); transform: translateY(-1px); } }
 .ref-header { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 13px; font-weight: 600; }
 .ref-score { color: var(--color-brand); font-size: 11px; }
 .ref-snippet { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
@@ -316,9 +333,9 @@ const handleInsertIntoNote = (text) => {
 }
 .solver-error-box {
   padding: 12px;
-  background-color: #FEF2F2;
-  border: 1px solid #FCA5A5;
-  color: #B91C1C;
+  background-color: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger-text);
   font-size: 12px;
   line-height: 1.4;
   border-radius: var(--radius-sm);
@@ -341,7 +358,7 @@ const handleInsertIntoNote = (text) => {
   background: transparent;
   font-size: 14px;
   resize: none;
-  max-height: 150px; /* 限制最大高度 */
+  max-height: 150px;
   overflow-y: auto;
   line-height: 1.5;
   color: var(--text-primary);
@@ -376,4 +393,36 @@ const handleInsertIntoNote = (text) => {
   .icon-sm { width: 16px; height: 16px; }
 }
 
+/* [新增] 上下文模式下的操作区样式 */
+.context-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.switch-to-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+  justify-content: center;
+
+  &:hover {
+    background-color: var(--color-brand-light);
+    color: var(--color-brand);
+  }
+
+  .icon-sm {
+    width: 16px;
+    height: 16px;
+  }
+}
 </style>

@@ -146,23 +146,21 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
-// 引入所有需要的图标
 import {
   Bold as BoldIcon,
-  Italic as ItalicIcon,       // [新增] 斜体图标
-  Strikethrough as StrikethroughIcon, // [新增] 删除线图标
+  Italic as ItalicIcon,
+  Strikethrough as StrikethroughIcon,
   Code as CodeIcon,
   List as ListIcon,
-  ListChecks as ListChecksIcon, // [新增] 任务列表图标
-  Heading2 as Heading2Icon,     // [新增] 标题图标
-  Link as LinkIcon,           // [新增] 链接图标
+  ListChecks as ListChecksIcon,
+  Heading2 as Heading2Icon,
+  Link as LinkIcon,
   Quote as QuoteIcon,
   Hash as HashIcon,
   Send as SendIcon,
   Save as SaveIcon,
 } from 'lucide-vue-next'
 
-// 引入自定义的辅助工具函数
 import { renderMarkdown } from '@/utils/markdownRenderer'
 import { insertSyntax, autoResizeTextarea } from '@/utils/markdownInputHelper'
 
@@ -176,47 +174,36 @@ const props = defineProps({
 const emit = defineEmits(['save', 'cancel'])
 
 // --- 响应式状态定义 ---
-const activeTab = ref('write')      // 当前激活的Tab页: 'write' 或 'preview'
-const localContent = ref('')        // 编辑器内部维护的内容状态
-const localTags = ref([])           // 编辑器内部维护的标签列表
-const textareaRef = ref(null)       // 对 <textarea> 元素的引用
-
-const isFocused = ref(false)              // 主文本域是否聚焦
-const isTagInputFocused = ref(false)      // 标签输入框是否聚焦
-const tagInput = ref('')                  // 标签输入框的 v-model
-const tagInputRef = ref(null)             // 对标签 <input> 元素的引用
+const activeTab = ref('write')
+const localContent = ref('')
+const localTags = ref([])
+const textareaRef = ref(null)
+const isFocused = ref(false)
+const isTagInputFocused = ref(false)
+const tagInput = ref('')
+const tagInputRef = ref(null)
 
 // --- 计算属性 ---
-
-// 渲染 Markdown 内容为 HTML
 const previewHtml = computed(() => {
   if (!localContent.value) return '<span class="empty-preview">Nothing to preview</span>'
   return renderMarkdown(localContent.value)
 })
 
-// 判断编辑器内容是否为空
 const isEmpty = computed(() => !localContent.value.trim())
 
-// [核心修复] 控制标签区域是否显示的计算属性
 const shouldShowTags = computed(() => {
-  // 仅当存在标签或用户正在输入标签时，才显示该区域
-  // 移除了对 isFocused 的依赖，从而解决了点击快捷按钮时的抖动问题
   return localTags.value.length > 0 || isTagInputFocused.value
 })
 
 // --- 辅助函数 ---
-
-// 自动调整文本域高度
 const resizeTextarea = () => {
   nextTick(() => {
-    // 增加鲁棒性检查，确保 textareaRef 存在
     if (textareaRef.value) {
       autoResizeTextarea(textareaRef.value, '120px')
     }
   })
 }
 
-// 切换 Tab (Write/Preview)
 const switchTab = (tab) => {
   activeTab.value = tab
   if (tab === 'write') {
@@ -225,63 +212,50 @@ const switchTab = (tab) => {
   }
 }
 
-// 插入 Markdown 语法
 const insertMarkdown = (prefix, suffix, multiline = false) => {
   if (!textareaRef.value) return
 
-  // 调用辅助函数处理文本插入逻辑
   const result = insertSyntax(textareaRef.value, prefix, suffix, multiline)
-
   if (result) {
     localContent.value = result.text
-    // 在下一次 DOM 更新后恢复光标位置
     nextTick(() => {
       if (textareaRef.value) {
         textareaRef.value.focus()
         textareaRef.value.setSelectionRange(result.newCursorStart, result.newCursorEnd)
-        resizeTextarea() // 插入内容后重新计算高度
+        resizeTextarea()
       }
     })
   }
 }
 
 // --- Watchers ---
-
-// 监听外部传入的初始内容，用于编辑模式
 watch(() => props.initialContent, (newVal) => {
   localContent.value = newVal || ''
   resizeTextarea()
 }, { immediate: true })
 
-// 监听外部传入的初始标签
 watch(() => props.initialTags, (newTags) => {
   localTags.value = [...newTags]
 }, { immediate: true })
 
-// 监听内容输入，实时调整文本域高度
 const handleInput = () => {
   resizeTextarea()
 }
 
 // --- 事件处理器 ---
-
 const handleFocus = () => isFocused.value = true
 const handleBlur = () => {
-  // 使用 setTimeout 延迟失焦判断，避免在点击其他按钮时立即失焦
   setTimeout(() => { isFocused.value = false }, 200)
 }
 
 const handleKeydown = (e) => {
-  // Ctrl/Cmd + Enter 保存
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault()
     handleSave()
   }
-  // Escape 取消编辑
   if (e.key === 'Escape' && props.isEditMode) {
     handleCancel()
   }
-  // Tab 键缩进
   if (e.key === 'Tab') {
     e.preventDefault()
     insertMarkdown('  ', '')
@@ -301,10 +275,7 @@ const handleCancel = () => {
 }
 
 // --- 标签相关逻辑 ---
-
-// 聚焦到标签输入框
 const focusTagInput = () => {
-  // 如果当前是预览模式，自动切回写入模式
   if (activeTab.value !== 'write') {
     switchTab('write')
   }
@@ -312,33 +283,26 @@ const focusTagInput = () => {
   nextTick(() => tagInputRef.value?.focus())
 }
 
-// 标签输入框失焦处理
 const handleTagInputBlur = () => {
-  // 如果输入框失焦时仍有内容，则自动添加为标签
   if (tagInput.value.trim()) {
     addTag()
   }
   setTimeout(() => { isTagInputFocused.value = false }, 200)
 }
 
-// 添加标签
 const addTag = () => {
   const val = tagInput.value.trim()
-  // 检查标签是否有效且不重复
   if (val && !localTags.value.includes(val)) {
     localTags.value.push(val)
   }
-  tagInput.value = '' // 清空输入框
+  tagInput.value = ''
 }
 
-// 移除标签
 const removeTag = (index) => {
   localTags.value.splice(index, 1)
 }
 
-// 处理标签输入框的退格键
 const handleBackspace = () => {
-  // 如果输入框为空，再按退格则删除最后一个标签
   if (tagInput.value === '' && localTags.value.length > 0) {
     localTags.value.pop()
   }
@@ -354,7 +318,7 @@ const clearEditor = () => {
   localContent.value = ''
   localTags.value = []
   tagInput.value = ''
-  activeTab.value = 'write' // 重置回写入模式
+  activeTab.value = 'write'
   resizeTextarea()
 }
 defineExpose({
@@ -364,9 +328,16 @@ defineExpose({
 
 <style lang="scss" scoped>
 /*
- * 智能编辑器样式
- * 整体采用 Flex 布局，分为 Header, Body, Footer 三个部分。
+ * [新增] 为编辑模式定义一个专用的背景色变量
+ * 这样就可以在 _variables.scss 中为亮色和深色模式分别定义
  */
+:root {
+  --bg-edit-mode: #FAFAFF;
+}
+html.dark {
+  --bg-edit-mode: rgba(99, 102, 241, 0.05); /* 深色模式下使用带透明度的品牌色 */
+}
+
 .smart-editor {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -387,7 +358,8 @@ defineExpose({
   // 编辑模式状态
   &.is-edit-mode {
     border-color: var(--color-brand);
-    background: #FAFAFF; // 使用一个非常淡的品牌色背景以示区分
+    /* [核心修改] 使用 CSS 变量替换硬编码颜色 */
+    background-color: var(--bg-edit-mode);
 
     .editor-header {
       border-bottom-color: rgba(99, 102, 241, 0.1);
@@ -403,7 +375,7 @@ defineExpose({
   padding: 8px 16px;
   background: var(--bg-app);
   border-bottom: 1px solid var(--border-light);
-  flex-shrink: 0; // 防止Header被压缩
+  flex-shrink: 0;
 }
 
 .tabs {
@@ -456,15 +428,13 @@ defineExpose({
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0; // 确保在 flex 容器中可以正确收缩
+  min-height: 0;
 }
 
 .source-textarea {
   width: 100%;
-  // [高度控制] 初始和最小高度为 120px
   height: 120px;
   min-height: 120px;
-  // [高度控制] 最大高度为 500px，防止无限增长
   max-height: 500px;
   resize: none;
   border: none;
@@ -508,7 +478,6 @@ defineExpose({
   animation: slideDown 0.2s ease-out;
 }
 
-// 简单的滑入动画
 @keyframes slideDown {
   from { opacity: 0; transform: translateY(-5px); }
   to { opacity: 1; transform: translateY(0); }
@@ -552,7 +521,6 @@ defineExpose({
   border-top: 1px solid transparent;
   flex-shrink: 0;
 
-  // 仅在聚焦时显示分割线，更显精致
   .is-focused & {
     border-top-color: var(--bg-hover);
   }
