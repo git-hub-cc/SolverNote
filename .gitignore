@@ -1,0 +1,20 @@
+# --- 依赖目录 ---
+node_modules/
+
+# --- Electron 构建输出 ---
+dist/
+out/
+
+# --- 系统生成的杂项 ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- 临时文件 ---
+tmp/
+*.log
+
+# --- 本地环境配置 (后续可能用到) ---
+.env
+.env.local

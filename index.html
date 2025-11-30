@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 解决 Electron Security Warning: 添加内容安全策略 (CSP) -->
+    <!-- 开发环境下允许 'unsafe-eval' 是因为 Vue/Vite 需要它，生产环境应更严格 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval';">
+
+    <title>SolverNote</title>
+</head>
+<body>
+<div id="app"></div>
+<!-- 关键修改：Vite 入口必须指向 src/main.js -->
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
