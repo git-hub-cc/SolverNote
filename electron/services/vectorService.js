@@ -1,141 +1,254 @@
-// [修改] 删除了顶部的 require 语句
+// electron/services/vectorService.js
+
 const path = require('path');
 const { app } = require('electron');
+const matter = require('gray-matter');
 
-// 单例模式，管理嵌入模型和数据库实例
+// =======================================================================
+// 常量定义
+// =======================================================================
+const CHUNK_SIZE = 500;
+const CHUNK_OVERLAP = 50;
+const TABLE_NAME = "notes_vectors";
+
+// =======================================================================
+// 单例模式状态管理
+// =======================================================================
+let llama = null;
 let embeddingModel = null;
 let db = null;
 let table = null;
 
-const TABLE_NAME = "notes_vectors";
+/**
+ * [内部辅助] 动态导入并初始化 LlamaCpp 核心引擎。
+ * @private
+ */
+async function _initializeLlama() {
+    if (llama) return;
+    try {
+        console.log('[Vector Service] 正在初始化 LlamaCpp 引擎...');
+        const { getLlama } = await import('node-llama-cpp');
+        llama = await getLlama();
+        console.log('[Vector Service] LlamaCpp 引擎初始化成功。');
+    } catch (error) {
+        console.error('[Vector Service] LlamaCpp 引擎初始化失败:', error);
+        throw new Error('无法初始化核心 AI 引擎 (node-llama-cpp)。');
+    }
+}
 
 /**
- * 初始化向量服务
- * @param {string} modelPath - BGE 等嵌入模型的 GGUF 文件路径
- * @returns {Promise<boolean>} 初始化是否成功
+ * 初始化向量服务。
+ * @param {string} modelPath - GGUF 格式嵌入模型文件的绝对路径。
+ * @returns {Promise<boolean>} 初始化成功返回 true，否则返回 false。
  */
 async function initialize(modelPath) {
-    // [修改] 动态导入 ESM 模块
-    const { LlamaModel, LlamaContext, LlamaEmbeddingContext } = await import("node-llama-cpp");
-    const lancedb = await import("@lancedb/lancedb");
+    if (!modelPath || typeof modelPath !== 'string') {
+        console.error('[Vector Service] 初始化失败：无效的嵌入模型路径。');
+        return false;
+    }
 
     try {
-        // 1. 加载嵌入模型
-        console.log(`正在加载嵌入模型: ${modelPath}`);
-        embeddingModel = new LlamaModel({ modelPath });
-        console.log('嵌入模型加载成功。');
+        await _initializeLlama();
+        const lancedb = await import('@lancedb/lancedb');
 
-        // 2. 初始化 LanceDB
+        console.log(`[Vector Service] 正在加载嵌入模型: ${path.basename(modelPath)}`);
+        embeddingModel = await llama.loadModel({ modelPath });
+        console.log('[Vector Service] 嵌入模型加载成功。');
+
         const dbPath = path.join(app.getPath('userData'), 'lancedb');
-        console.log(`正在连接向量数据库: ${dbPath}`);
+        console.log(`[Vector Service] 正在连接向量数据库，路径: ${dbPath}`);
         db = await lancedb.connect(dbPath);
 
-        // 3. 获取或创建表
+        let dims = 384;
+        if (embeddingModel && embeddingModel.metadata) {
+            const embeddingLength = embeddingModel.metadata["llm.embedding_length"] || embeddingModel.metadata.embedding_length;
+            if (typeof embeddingLength === 'number' && embeddingLength > 0) {
+                dims = embeddingLength;
+            }
+        }
+        console.log(`[Vector Service] 检测到嵌入模型维度: ${dims}`);
+
         const tableNames = await db.tableNames();
         if (tableNames.includes(TABLE_NAME)) {
             table = await db.openTable(TABLE_NAME);
-            console.log(`已打开表: ${TABLE_NAME}`);
+            console.log(`[Vector Service] 已成功打开现有向量表: ${TABLE_NAME}`);
         } else {
-            // 假设嵌入维度为 384 (bge-small)
-            const context = new LlamaContext({ model: embeddingModel });
-            const embeddingContext = new LlamaEmbeddingContext({ context });
-            const dims = embeddingContext.getEmbeddingSize();
-            context.dispose(); // 用完即释放
-
-            // 创建一个空数组和 schema 来初始化表
-            table = await db.createTable(TABLE_NAME, [{ vector: Array(dims).fill(0), id: 'init', text: 'init' }]);
-            await table.delete("id = 'init'"); // 删除初始化数据
-            console.log(`已创建新表: ${TABLE_NAME}，向量维度: ${dims}`);
+            console.log(`[Vector Service] 向量表不存在，正在创建新表: ${TABLE_NAME}`);
+            const initialData = [{
+                vector: Array(dims).fill(0.0),
+                noteId: 'init_placeholder',
+                chunkId: 0,
+                text: 'Initial record',
+                title: 'Initial Title'
+            }];
+            table = await db.createTable(TABLE_NAME, initialData);
+            await table.delete(`"noteId" = 'init_placeholder'`);
+            console.log(`[Vector Service] 新向量表 '${TABLE_NAME}' 创建成功，维度为 ${dims}。`);
         }
 
         return true;
     } catch (error) {
-        console.error('初始化向量服务失败:', error);
+        console.error('[Vector Service] 初始化过程中发生严重错误:', error);
+        embeddingModel = null;
+        db = null;
+        table = null;
         return false;
     }
 }
 
 /**
- * 为给定的文本创建向量嵌入
- * @param {string} text - 输入文本
- * @returns {Promise<number[]>} 文本的向量表示
+ * 为给定的文本片段创建嵌入向量。
+ * @param {string} text - 需要被向量化的文本。
+ * @returns {Promise<number[]>} - 嵌入向量（一个浮点数数组）。
  */
 async function createEmbedding(text) {
-    if (!embeddingModel) throw new Error("嵌入模型未加载。");
-
-    // [修改] 动态导入 ESM 模块
-    const { LlamaContext, LlamaEmbeddingContext } = await import("node-llama-cpp");
-
-    const context = new LlamaContext({ model: embeddingModel });
-    const embeddingContext = new LlamaEmbeddingContext({ context });
-
-    const embedding = await embeddingContext.getEmbedding(text);
-
-    context.dispose(); // 释放资源
-    return embedding.vector;
-}
-
-/**
- * 索引一篇笔记（新增或更新）
- * @param {string} noteId - 笔记的唯一标识 (文件名)
- * @param {string} content - 笔记的内容
- */
-async function indexNote(noteId, content) {
-    if (!table) return;
+    if (!embeddingModel) {
+        throw new Error("嵌入模型尚未加载，无法创建向量。");
+    }
+    let context = null;
     try {
-        // 先尝试删除旧的记录，确保数据最新
-        await table.delete(`id = "${noteId}"`).catch(() => {});
-
-        const vector = await createEmbedding(content);
-
-        // 截取部分内容作为预览
-        const snippet = content.substring(0, 150).replace(/\n/g, ' ');
-
-        await table.add([{ vector, id: noteId, text: snippet }]);
-        console.log(`已索引笔记: ${noteId}`);
+        context = await embeddingModel.createEmbeddingContext();
+        const embedding = await context.getEmbeddingFor(text);
+        return embedding.vector;
     } catch (error) {
-        console.error(`索引笔记 ${noteId} 失败:`, error);
+        console.error('[Vector Service] 创建嵌入向量时出错:', error);
+        throw error;
+    } finally {
+        if (context) {
+            await context.dispose();
+        }
     }
 }
 
 /**
- * 从索引中删除一篇笔记
- * @param {string} noteId - 笔记的唯一标识 (文件名)
+ * 将一篇笔记分割、向量化并存入 LanceDB。
+ * @param {string} noteId - 笔记的唯一标识符。
+ * @param {string} rawContent - 笔记的完整 Markdown 内容。
+ */
+async function indexNote(noteId, rawContent) {
+    if (!table) {
+        console.warn('[Vector Service] 向量表未初始化，跳过索引操作。');
+        return;
+    }
+    try {
+        await table.delete(`"noteId" = "${noteId}"`).catch(err => {
+            console.warn(`[Vector Service] 清理笔记 '${noteId}' 的旧索引时出现非致命错误:`, err.message);
+        });
+
+        const { data, content } = matter(rawContent);
+        const title = data.title || '';
+        const contentToEmbed = content.trim();
+
+        if (!contentToEmbed) {
+            console.log(`[Vector Service] 笔记 '${noteId}' 内容为空，跳过索引。`);
+            return;
+        }
+
+        const chunks = [];
+        for (let i = 0; i < contentToEmbed.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
+            chunks.push(contentToEmbed.substring(i, i + CHUNK_SIZE));
+        }
+        if (chunks.length === 0) return;
+
+        console.log(`[Vector Service] 正在为笔记 '${noteId}' 创建 ${chunks.length} 个向量块...`);
+
+        const dataToWrite = [];
+        for (let i = 0; i < chunks.length; i++) {
+            const chunkText = chunks[i];
+            const vector = await createEmbedding(chunkText);
+            dataToWrite.push({
+                vector,
+                noteId: noteId,
+                chunkId: i,
+                text: chunkText,
+                title: title
+            });
+        }
+
+        if (dataToWrite.length > 0) {
+            await table.add(dataToWrite);
+            console.log(`[Vector Service] 成功索引笔记 '${noteId}'（共 ${dataToWrite.length} 个块）。`);
+        }
+    } catch (error) {
+        console.error(`[Vector Service] 索引笔记 '${noteId}' 失败:`, error);
+    }
+}
+
+/**
+ * 从 LanceDB 中删除指定笔记的所有相关索引。
+ * @param {string} noteId - 要删除的笔记的 ID。
  */
 async function deleteNoteIndex(noteId) {
     if (!table) return;
     try {
-        await table.delete(`id = "${noteId}"`);
-        console.log(`已从索引中删除: ${noteId}`);
+        await table.delete(`"noteId" = "${noteId}"`);
+        console.log(`[Vector Service] 已从索引中删除笔记 '${noteId}' 的所有块。`);
     } catch (error) {
-        console.error(`删除索引 ${noteId} 失败:`, error);
+        console.error(`[Vector Service] 删除笔记 '${noteId}' 的索引失败:`, error);
     }
 }
 
 /**
- * 搜索与查询文本相似的笔记
- * @param {string} queryText - 查询文本
- * @param {number} limit - 返回结果数量
- * @returns {Promise<object[]>} 相似笔记列表
+ * 根据查询文本，在 LanceDB 中搜索语义上相似的笔记文本块。
+ * @param {string} queryText - 用户的搜索查询。
+ * @param {number} [limit=5] - 返回结果的最大数量。
+ * @returns {Promise<Array<Object>>} - 包含相似笔记片段信息的数组。
  */
 async function searchSimilarNotes(queryText, limit = 5) {
-    if (!table) return [];
+    if (!table) {
+        console.warn('[Vector Service] 向量表未初始化，无法执行语义搜索。');
+        return [];
+    }
     try {
+        console.log(`[Vector Service] 正在为查询创建嵌入: "${queryText.substring(0, 50)}..."`);
         const queryVector = await createEmbedding(queryText);
-        const results = await table.search(queryVector).limit(limit).execute();
+        console.log('[Vector Service] 嵌入创建成功，正在执行向量搜索...');
 
-        return results.map(r => ({
-            id: r.id,
-            snippet: r.text,
-            // _distance 是 LanceDB 返回的距离，越小越相似。可以转换为 0-100 的相似度分值
-            similarity: Math.round(Math.max(0, 1 - r._distance) * 100)
-        }));
+        const searchResults = await table.search(queryVector)
+            .limit(limit)
+            .execute();
+
+        // --- 防御性编程与日志增强 ---
+        // 检查 searchResults 的类型，并据此处理
+        if (Array.isArray(searchResults)) {
+            console.log(`[Vector Service] 搜索成功，直接返回了 ${searchResults.length} 个结果数组。`);
+            // 如果是数组，直接处理
+            return searchResults.map(r => ({
+                id: r.noteId,
+                snippet: r.text,
+                title: r.title,
+                similarity: Math.round(Math.max(0, 1 - r._distance) * 100)
+            }));
+        } else if (searchResults && typeof searchResults[Symbol.asyncIterator] === 'function') {
+            // 如果是异步生成器
+            console.log('[Vector Service] 搜索返回了一个异步生成器，正在迭代处理...');
+            const resultsArray = [];
+            for await (const r of searchResults) {
+                resultsArray.push({
+                    id: r.noteId,
+                    snippet: r.text,
+                    title: r.title,
+                    similarity: Math.round(Math.max(0, 1 - r._distance) * 100)
+                });
+            }
+            console.log(`[Vector Service] 异步生成器处理完成，共获得 ${resultsArray.length} 个结果。`);
+            return resultsArray;
+        } else {
+            // 处理未知或意外的返回类型
+            console.error('[Vector Service] 向量搜索返回了非预期的格式:', searchResults);
+            // 记录构造函数名称，以帮助调试
+            const constructorName = searchResults?.constructor?.name || typeof searchResults;
+            console.error(`[Vector Service] 返回类型构造函数: ${constructorName}`);
+            return [];
+        }
+
     } catch (error) {
-        console.error('语义搜索失败:', error);
+        console.error('[Vector Service] 语义搜索过程中发生严重错误:', error);
         return [];
     }
 }
 
+// 导出模块的公共 API
 module.exports = {
     initialize,
     indexNote,

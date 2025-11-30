@@ -1,3 +1,5 @@
+// src/stores/solverStore.js
+
 import { defineStore } from 'pinia'
 import { useNoteStore } from './noteStore'
 
@@ -8,7 +10,7 @@ export const useSolverStore = defineStore('solver', {
 
         // 对话历史
         chatHistory: [
-            { role: 'ai', text: '我是 Solver，你的知识库助手。有什么可以帮你？' }
+            { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。选中一篇笔记我会自动分析，你也可以直接向我提问。' }
         ],
 
         // 智能关联 (Context)
@@ -27,21 +29,16 @@ export const useSolverStore = defineStore('solver', {
     actions: {
         /**
          * 初始化并注册与 Electron 主进程的流式通信监听器
-         * 建议在应用根组件 (App.vue) 中调用一次
          */
         setupListeners() {
-            // 清理旧的监听器，防止重复注册
             this.cleanupListeners();
-
             if (!window.electronAPI) return;
 
-            // 监听新的 token
             const unsubscribeToken = window.electronAPI.onLLMToken((token) => {
                 this.streamingText += token;
             });
             this._listeners.push(unsubscribeToken);
 
-            // 监听流结束事件
             const unsubscribeEnd = window.electronAPI.onLLMEnd(() => {
                 if (this.streamingText) {
                     this.chatHistory.push({ role: 'ai', text: this.streamingText });
@@ -51,11 +48,9 @@ export const useSolverStore = defineStore('solver', {
             });
             this._listeners.push(unsubscribeEnd);
 
-            // 监听错误事件
             const unsubscribeError = window.electronAPI.onLLMError((errorMsg) => {
                 this.error = errorMsg;
                 this.isThinking = false;
-                // 5秒后自动清除错误信息
                 setTimeout(() => { this.error = null; }, 5000);
             });
             this._listeners.push(unsubscribeError);
@@ -63,7 +58,6 @@ export const useSolverStore = defineStore('solver', {
 
         /**
          * 清理所有活动的监听器
-         * 在组件卸载或重新设置监听器时调用
          */
         cleanupListeners() {
             this._listeners.forEach(unsubscribe => unsubscribe());
@@ -88,20 +82,46 @@ export const useSolverStore = defineStore('solver', {
             const selectedNote = noteStore.notes.find(n => n.id === noteId);
 
             if (!selectedNote || !window.electronAPI) {
-                this.relatedContexts = [];
                 this.isThinking = false;
                 if (!window.electronAPI) console.warn('Electron API not found.');
                 return;
             }
 
             try {
-                // 调用后端真实的语义搜索接口
-                const results = await window.electronAPI.semanticSearch(selectedNote.content);
-                // 更新 title (这里简化为 id, 实际应用可从元数据获取)
-                this.relatedContexts = results.map(r => ({ ...r, title: r.id }));
+                // ======================================================================
+                // --- 核心 Bug 修复 ---
+                // 错误原因：将整篇笔记的长文本作为查询输入，超出了嵌入模型的上下文长度限制。
+                // 解决方案：构造一个更短、更有代表性的查询文本。
+                // 策略：优先使用笔记的标题。如果没有标题，则使用笔记内容的前 200 个字符。
+                // 这个长度（200个字符）对于嵌入模型来说是安全的。
+                // ======================================================================
+
+                let queryText = '';
+                // 优先使用笔记的标题作为查询文本
+                if (selectedNote.title && selectedNote.title.trim()) {
+                    queryText = selectedNote.title;
+                } else if (selectedNote.content && selectedNote.content.trim()) {
+                    // 如果没有标题，则截取内容的前200个字符作为查询
+                    queryText = selectedNote.content.substring(0, 200);
+                }
+
+                // 如果最终的查询文本为空，则不执行搜索
+                if (!queryText.trim()) {
+                    this.relatedContexts = [];
+                    this.isThinking = false;
+                    return;
+                }
+
+                console.log(`[SolverStore] 使用以下文本进行智能关联搜索: "${queryText}"`);
+
+                const results = await window.electronAPI.semanticSearch(queryText);
+
+                // [增强逻辑] 过滤掉与当前笔记自身完全相同的结果
+                this.relatedContexts = results.filter(result => result.id !== selectedNote.id);
+
             } catch (err) {
                 console.error('Semantic search failed:', err);
-                this.error = 'Failed to analyze context.';
+                this.error = '智能关联分析失败。';
             } finally {
                 this.isThinking = false;
             }
@@ -109,26 +129,27 @@ export const useSolverStore = defineStore('solver', {
 
         /**
          * 发送聊天消息
+         * @param {string} text - 用户输入的消息
          */
         async sendMessage(text) {
-            if (!text.trim() || this.isThinking) return;
+            if (!text || !text.trim() || this.isThinking) return;
             if (!window.electronAPI) {
-                console.error('Electron API not found. Cannot send message.');
                 this.error = 'AI 功能仅在桌面应用中可用。';
                 return;
             }
 
-            // 1. 清空错误，用户消息上屏
             this.error = null;
             this.chatHistory.push({ role: 'user', text });
 
-            // 2. 重置流式缓冲区并设置思考状态
+            const noteStore = useNoteStore();
+            const contextNote = noteStore.activeNote;
+            const contextContent = contextNote ? contextNote.content : null;
+
             this.streamingText = '';
             this.isThinking = true;
 
             try {
-                // 3. 调用后端开始流式聊天，后续由监听器处理
-                await window.electronAPI.startChat(text);
+                await window.electronAPI.startChat(text, contextContent);
             } catch (err) {
                 console.error('Failed to start chat stream:', err);
                 this.error = `无法开始对话: ${err.message}`;

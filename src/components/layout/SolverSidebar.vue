@@ -1,73 +1,175 @@
 <template>
   <aside class="solver-sidebar">
-    <!-- Header -->
+    <!-- Header: 标题与状态指示 -->
     <div class="solver-header">
       <span class="title">{{ currentTitle }}</span>
       <div class="status-dot" :class="{ active: solverStore.isThinking }"></div>
     </div>
 
-    <!-- Content Body -->
-    <div class="solver-content">
-      <!-- ... (内容部分保持不变) ... -->
+    <!-- Content Body: 聊天记录或上下文关联 -->
+    <div class="solver-content" ref="contentAreaRef">
       <!-- 1. 聊天模式 -->
       <div v-if="solverStore.mode === 'chat'" class="chat-view">
-        <div v-for="(msg, index) in solverStore.chatHistory" :key="index" class="chat-bubble" :class="msg.role">
-          <div class="bubble-text" v-html="renderMarkdown(msg.text)"></div>
+        <div v-for="(msg, index) in solverStore.chatHistory" :key="index" class="chat-bubble-wrapper">
+          <div class="chat-bubble" :class="msg.role">
+            <!-- AI 消息的操作按钮 (悬停显示) -->
+            <div v-if="msg.role === 'ai'" class="bubble-actions">
+              <button @click="handleCopyToClipboard(msg.text)" title="复制"><CopyIcon class="icon-xs" /></button>
+              <button @click="handleInsertIntoNote(msg.text)" title="插入到笔记"><CornerDownLeftIcon class="icon-xs" /></button>
+            </div>
+            <!-- 渲染后的消息文本 -->
+            <div class="bubble-text" v-html="renderMarkdown(msg.text)"></div>
+          </div>
         </div>
+
         <!-- 流式输出中的消息 -->
-        <div v-if="solverStore.streamingText" class="chat-bubble ai streaming">
-          <div class="bubble-text">{{ solverStore.streamingText }}<span class="cursor">|</span></div>
+        <div v-if="solverStore.streamingText" class="chat-bubble-wrapper">
+          <div class="chat-bubble ai streaming">
+            <div class="bubble-text">{{ solverStore.streamingText }}<span class="cursor">|</span></div>
+          </div>
         </div>
       </div>
+
       <!-- 2. 上下文模式 (智能关联) -->
       <div v-else-if="solverStore.mode === 'context'" class="context-view">
         <div class="context-meta">
-          Based on selection
+          基于当前选中笔记的智能关联
         </div>
         <div v-if="solverStore.isThinking" class="loading-state">
-          Thinking...
+          思考中...
         </div>
         <div v-else-if="solverStore.relatedContexts.length === 0" class="empty-state">
-          No related context found.
+          未找到相关内容。
         </div>
-        <div
-            v-else
-            v-for="ref in solverStore.relatedContexts"
-            :key="ref.id"
-            class="ref-card"
-        >
-          <div class="ref-header">
-            <span class="ref-title">{{ ref.title }}</span>
-            <span class="ref-score">{{ ref.similarity }}%</span>
+        <div v-else>
+          <!-- 关键修改: 增加 @click 事件处理器 -->
+          <div
+              v-for="ref in solverStore.relatedContexts"
+              :key="ref.id"
+              class="ref-card"
+              @click="handleRefCardClick(ref.id)"
+              title="点击跳转到该笔记"
+          >
+            <div class="ref-header">
+              <!-- 关键修改: 优先显示 title，其次是 id -->
+              <span class="ref-title">{{ ref.title || ref.id }}</span>
+              <span class="ref-score">{{ ref.similarity }}%</span>
+            </div>
+            <div class="ref-snippet">{{ ref.snippet }}</div>
           </div>
-          <div class="ref-snippet">{{ ref.snippet }}</div>
         </div>
       </div>
     </div>
 
-    <!-- [新增] 底部错误提示区域 -->
-    <div v-if="solverStore.error" class="solver-footer-error">
-      <p>{{ solverStore.error }}</p>
-    </div>
+    <!-- Footer: 错误提示与聊天输入框 -->
+    <footer class="solver-footer">
+      <!-- 错误提示 -->
+      <div v-if="solverStore.error" class="solver-error-box">
+        <p>{{ solverStore.error }}</p>
+      </div>
+
+      <!-- 聊天输入区域 -->
+      <div class="chat-input-area">
+        <textarea
+            ref="textareaRef"
+            v-model="chatInput"
+            placeholder="向 Solver 提问..."
+            class="chat-textarea"
+            :disabled="solverStore.isThinking"
+            @input="autoResizeTextarea"
+            @keydown.enter.exact.prevent="sendMessage"
+        ></textarea>
+        <button class="send-button" @click="sendMessage" :disabled="!chatInput.trim() || solverStore.isThinking">
+          <SendIcon class="icon-sm" />
+        </button>
+      </div>
+    </footer>
   </aside>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useSolverStore } from '@/stores/solverStore'
-const renderMarkdown = (text) => text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+import { useNoteStore } from '@/stores/noteStore' // 引入 noteStore
+import { renderMarkdown } from '@/utils/markdownRenderer'
+import { Send as SendIcon, Copy as CopyIcon, CornerDownLeft as CornerDownLeftIcon } from 'lucide-vue-next'
 
 const solverStore = useSolverStore()
+const noteStore = useNoteStore() // 实例化
 
+// --- 响应式引用 ---
+const chatInput = ref('')
+const textareaRef = ref(null)
+const contentAreaRef = ref(null)
+
+// --- 计算属性 ---
 const currentTitle = computed(() => {
-  return solverStore.mode === 'chat' ? 'The Solver' : 'Context (Auto)'
+  return solverStore.mode === 'chat' ? '智能助手 (Solver)' : '智能关联 (Context)'
 })
+
+// --- DOM 操作与副作用 ---
+
+// 自动调整文本框高度
+const autoResizeTextarea = () => {
+  const el = textareaRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
+// 监听聊天记录变化，自动滚动到底部
+watch(() => [solverStore.chatHistory.length, solverStore.streamingText], async () => {
+  await nextTick()
+  if (contentAreaRef.value) {
+    contentAreaRef.value.scrollTop = contentAreaRef.value.scrollHeight
+  }
+}, { deep: true })
+
+
+// --- 事件处理器 ---
+
+// 发送消息
+const sendMessage = () => {
+  const text = chatInput.value.trim()
+  if (!text || solverStore.isThinking) return
+
+  // 调用 store 的 action
+  solverStore.sendMessage(text)
+
+  // 清空输入框并重置高度
+  chatInput.value = ''
+  nextTick(autoResizeTextarea)
+}
+
+// 点击关联卡片
+const handleRefCardClick = (noteId) => {
+  // 调用 noteStore 的 action 来处理跳转
+  noteStore.scrollToNote(noteId)
+}
+
+// 复制 AI 回复
+const handleCopyToClipboard = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    // 可以在这里加一个短暂的 "已复制" 提示
+  } catch (err) {
+    console.error('复制失败:', err)
+  }
+}
+
+// 将 AI 回复插入到当前笔记
+const handleInsertIntoNote = (text) => {
+  // 调用 noteStore 的 action 处理插入逻辑
+  noteStore.insertTextIntoNote(text)
+}
 </script>
 
 <style lang="scss" scoped>
 .solver-sidebar {
   display: flex;
   flex-direction: column;
+  height: 100vh; // 确保填满整个高度
+  background-color: var(--bg-card);
 }
 
 .solver-header {
@@ -88,9 +190,8 @@ const currentTitle = computed(() => {
     border-radius: 50%;
     background-color: var(--border-light);
     transition: all 0.3s;
-
     &.active {
-      background-color: #10B981; /* Emerald-500 */
+      background-color: #10B981;
       animation: pulse 2s infinite;
     }
   }
@@ -105,33 +206,140 @@ const currentTitle = computed(() => {
   gap: 16px;
 }
 
-/* [新增] 底部错误样式 */
-.solver-footer-error {
-  flex-shrink: 0;
-  padding: 12px 16px;
-  background-color: #FEF2F2;
-  border-top: 1px solid #FCA5A5;
-  color: #B91C1C;
-  font-size: 12px;
-  line-height: 1.4;
+/* --- 聊天视图样式 --- */
+.chat-bubble-wrapper {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+.chat-bubble {
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 10px 14px;
+  border-radius: 12px;
+  max-width: 90%;
+  position: relative;
+
+  &.user {
+    align-self: flex-end;
+    background: var(--color-brand);
+    color: white;
+  }
+  &.ai {
+    align-self: flex-start;
+    background: var(--bg-hover);
+    color: var(--text-primary);
+
+    // 悬停时显示操作按钮
+    &:hover .bubble-actions {
+      opacity: 1;
+    }
+  }
 }
 
-/* --- 以下为原有样式，保持不变 --- */
-.chat-bubble {
-  font-size: 13px;
-  line-height: 1.5;
-  margin-bottom: 12px;
+.bubble-actions {
+  position: absolute;
+  top: -10px;
+  right: 0;
+  display: flex;
+  gap: 4px;
+  background: white;
+  padding: 4px;
+  border-radius: 6px;
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+  transition: opacity 0.2s;
 
-  &.user { color: var(--text-secondary); text-align: right; }
-  &.ai { background: var(--bg-hover); padding: 12px; border-radius: 8px; color: var(--text-primary); }
+  button {
+    color: var(--text-tertiary);
+    cursor: pointer;
+    &:hover { color: var(--text-primary); }
+  }
+  .icon-xs { width: 14px; height: 14px; }
 }
 
 .cursor { display: inline-block; animation: blink 1s step-end infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* --- 上下文视图样式 --- */
 .context-meta { font-size: 11px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 8px; }
-.ref-card { background: var(--bg-app); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 12px; cursor: pointer; transition: all 0.2s; &:hover { background: #fff; border-color: var(--border-light); box-shadow: var(--shadow-card); } }
+.ref-card { background: var(--bg-app); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 12px; cursor: pointer; transition: all 0.2s; &:hover { background: #fff; border-color: var(--color-brand-light); box-shadow: var(--shadow-card); transform: translateY(-1px); } }
 .ref-header { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 13px; font-weight: 600; }
 .ref-score { color: var(--color-brand); font-size: 11px; }
 .ref-snippet { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.loading-state, .empty-state {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* --- 底部区域样式 --- */
+.solver-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-light);
+  padding: 12px 16px;
+}
+.solver-error-box {
+  padding: 12px;
+  background-color: #FEF2F2;
+  border: 1px solid #FCA5A5;
+  color: #B91C1C;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+
+.chat-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background-color: var(--bg-hover);
+  border-radius: var(--radius-md);
+  padding: 8px;
+}
+
+.chat-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  resize: none;
+  max-height: 150px; /* 限制最大高度 */
+  overflow-y: auto;
+  line-height: 1.5;
+  color: var(--text-primary);
+
+  &::placeholder {
+    color: var(--text-tertiary);
+  }
+  &:disabled {
+    background-color: transparent;
+  }
+}
+
+.send-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: var(--color-brand);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover:not(:disabled) {
+    background-color: var(--color-brand-hover);
+  }
+  &:disabled {
+    background-color: var(--bg-active);
+    cursor: not-allowed;
+  }
+  .icon-sm { width: 16px; height: 16px; }
+}
+
 </style>
