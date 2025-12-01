@@ -2,60 +2,113 @@
   <div class="settings-view">
     <!-- 1. 页面主标题 -->
     <div class="view-header">
-      <h2>设置</h2>
-      <span class="sub-header">管理应用的外观和 AI 模型。</span>
+      <h2>Settings</h2>
+      <span class="sub-header">Manage application preferences and AI models.</span>
     </div>
 
-    <!-- 2. [新增] 外观设置区域 -->
+    <!-- 2. [新增] 常规设置 (General) -->
     <section class="settings-section">
-      <h3 class="section-title">外观</h3>
+      <h3 class="section-title">General</h3>
+
+      <!-- 笔记目录设置 -->
       <div class="setting-item">
         <div class="setting-label">
-          <span class="label-title">主题</span>
-          <span class="label-desc">选择应用的界面颜色主题。</span>
+          <span class="label-title">Notes Directory</span>
+          <span class="label-desc">Location where your markdown files are stored.</span>
+        </div>
+        <div class="setting-control vertical">
+          <div class="path-display-group">
+            <input type="text" readonly :value="settings.notesPath" class="path-input" />
+            <button class="action-btn" @click="openInExplorer" title="Open in Explorer">
+              <FolderOpenIcon class="icon-sm" />
+            </button>
+          </div>
+          <button class="action-btn secondary" @click="changeNotesDir">
+            Change Location...
+          </button>
+          <p class="warning-text" v-if="pathChanged">
+            <AlertCircleIcon class="icon-xs" />
+            Note: Changing directory will trigger a full re-index.
+          </p>
+        </div>
+      </div>
+
+      <!-- 删除模式设置 -->
+      <div class="setting-item">
+        <div class="setting-label">
+          <span class="label-title">Deletion Behavior</span>
+          <span class="label-desc">How files should be handled when deleted.</span>
         </div>
         <div class="setting-control">
-          <!-- 主题切换器，通过 uiStore 驱动 -->
+          <div class="radio-group">
+            <label class="radio-label">
+              <input
+                  type="radio"
+                  value="trash"
+                  v-model="settings.deleteMode"
+                  @change="updateSetting('deleteMode', 'trash')"
+              />
+              Move to Trash (Recommended)
+            </label>
+            <label class="radio-label">
+              <input
+                  type="radio"
+                  value="permanent"
+                  v-model="settings.deleteMode"
+                  @change="updateSetting('deleteMode', 'permanent')"
+              />
+              Permanently Delete
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. 外观设置 -->
+    <section class="settings-section">
+      <h3 class="section-title">Appearance</h3>
+      <div class="setting-item">
+        <div class="setting-label">
+          <span class="label-title">Theme</span>
+          <span class="label-desc">Choose the application color theme.</span>
+        </div>
+        <div class="setting-control">
           <div class="theme-selector">
             <button
                 class="theme-option"
                 :class="{ active: uiStore.themePreference === 'light' }"
                 @click="uiStore.setThemePreference('light')"
-                aria-label="切换到浅色主题"
             >
-              <SunIcon class="icon-sm"/> 浅色
+              <SunIcon class="icon-sm"/> Light
             </button>
             <button
                 class="theme-option"
                 :class="{ active: uiStore.themePreference === 'dark' }"
                 @click="uiStore.setThemePreference('dark')"
-                aria-label="切换到深色主题"
             >
-              <MoonIcon class="icon-sm"/> 深色
+              <MoonIcon class="icon-sm"/> Dark
             </button>
             <button
                 class="theme-option"
                 :class="{ active: uiStore.themePreference === 'system' }"
                 @click="uiStore.setThemePreference('system')"
-                aria-label="设置为跟随系统主题"
             >
-              <LaptopIcon class="icon-sm"/> 跟随系统
+              <LaptopIcon class="icon-sm"/> System
             </button>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 3. AI 模型下载区域 -->
+    <!-- 4. AI 模型下载区域 -->
     <section class="settings-section">
-      <h3 class="section-title">AI 模型</h3>
+      <h3 class="section-title">AI Models</h3>
       <p class="section-description">
-        应用依赖以下两个模型才能完整运行。如果状态显示“未找到”，请点击下载。
+        The application requires the following models to function fully.
         <br>
-        <span class="path-info">模型将保存至: {{ modelsDir }}</span>
+        <span class="path-info">Models path: {{ modelsDir }}</span>
       </p>
       <div class="model-list">
-        <!-- 模型下载卡片 -->
         <div v-for="model in recommendedModels" :key="model.fileName" class="model-card download-card">
           <div class="model-info">
             <span class="model-name">{{ model.name }}</span>
@@ -66,27 +119,22 @@
               class="action-btn"
               @click="downloadModel(model)"
               :disabled="isDownloading(model.fileName) || localModels.includes(model.fileName)">
-            <!-- 根据不同状态显示不同图标和文本 -->
             <DownloadCloudIcon class="icon-sm" v-if="!isDownloading(model.fileName) && !localModels.includes(model.fileName)" />
             <CheckCircle2Icon class="icon-sm success-icon" v-if="localModels.includes(model.fileName)" />
             <span v-if="isDownloading(model.fileName)">{{ downloadProgress[model.fileName] || 0 }}%</span>
-            <span v-else>{{ localModels.includes(model.fileName) ? '已下载' : '下载' }}</span>
+            <span v-else>{{ localModels.includes(model.fileName) ? 'Downloaded' : 'Download' }}</span>
           </button>
         </div>
       </div>
     </section>
 
-    <!-- 4. AI 服务状态面板 -->
+    <!-- 5. AI 服务状态面板 -->
     <section class="settings-section">
-      <h3 class="section-title">AI 服务状态</h3>
-      <p class="section-description">
-        这里显示核心 AI 功能的当前状态。模型下载后，您可能需要**重启应用**来加载它们。
-      </p>
+      <h3 class="section-title">AI Service Status</h3>
       <div class="status-panel">
-        <!-- 对话模型状态 -->
         <div class="status-item">
           <div class="status-info">
-            <span class="status-name">对话模型 (LLM)</span>
+            <span class="status-name">Chat Model (LLM)</span>
             <span class="status-model-name">qwen1_5-0_5b-chat-q4_k_m.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.chat)">
@@ -94,10 +142,9 @@
             <span>{{ formatStatusText(modelStatuses.chat) }}</span>
           </div>
         </div>
-        <!-- 嵌入模型状态 -->
         <div class="status-item">
           <div class="status-info">
-            <span class="status-name">嵌入与搜索模型</span>
+            <span class="status-name">Embedding & Search Model</span>
             <span class="status-model-name">bge-small-en-v1.5.Q8_0.gguf</span>
           </div>
           <div class="status-indicator" :class="statusClass(modelStatuses.embedding)">
@@ -108,379 +155,219 @@
       </div>
     </section>
 
-    <!-- 5. 全局错误/成功提示框 -->
+    <!-- 全局提示框 -->
     <section class="settings-section">
-      <div v-if="globalError" class="error-box">
-        {{ globalError }}
-      </div>
-      <div v-if="globalSuccess" class="success-box">
-        {{ globalSuccess }}
-      </div>
+      <div v-if="globalError" class="error-box">{{ globalError }}</div>
+      <div v-if="globalSuccess" class="success-box">{{ globalSuccess }}</div>
     </section>
 
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue';
-// 引入 uiStore 用于主题切换
+import { ref, onMounted, onUnmounted, computed, reactive } from 'vue';
 import { useUIStore } from '@/stores/uiStore';
-// 引入所有需要的图标
+import { useNoteStore } from '@/stores/noteStore';
 import {
-  DownloadCloudIcon,
-  CheckCircle2Icon,
-  LoaderCircleIcon,
-  AlertTriangleIcon,
-  XCircleIcon,
-  BrainCircuitIcon,
-  Sun as SunIcon,
-  Moon as MoonIcon,
-  Laptop as LaptopIcon
+  DownloadCloudIcon, CheckCircle2Icon, LoaderCircleIcon, AlertTriangleIcon, XCircleIcon,
+  BrainCircuitIcon, Sun as SunIcon, Moon as MoonIcon, Laptop as LaptopIcon,
+  FolderOpen as FolderOpenIcon, AlertCircle as AlertCircleIcon
 } from 'lucide-vue-next';
 
-// 获取 uiStore 实例，用于在模板中直接访问和修改主题偏好
 const uiStore = useUIStore();
+const noteStore = useNoteStore();
 
-// --- 推荐模型列表 ---
+// --- 常规设置状态 ---
+const settings = reactive({
+  notesPath: '',
+  deleteMode: 'trash'
+});
+const pathChanged = ref(false);
+
+// --- 模型相关状态 ---
 const recommendedModels = [
   {
     name: 'Qwen1.5-0.5B-Chat',
     fileName: 'qwen1_5-0_5b-chat-q4_k_m.gguf',
     url: 'https://modelscope.cn/api/v1/models/qwen/Qwen1.5-0.5B-Chat-GGUF/repo?Revision=master&FilePath=qwen1_5-0_5b-chat-q4_k_m.gguf',
-    size: '~380MB',
-    type: '对话模型',
-    description: '来自阿里云的小型、快速且功能强大的聊天模型。适合通用任务。'
+    size: '~380MB', type: 'Chat Model', description: 'A small, fast, and capable chat model from Alibaba Cloud.'
   },
   {
     name: 'BGE-Small-English-v1.5',
     fileName: 'bge-small-en-v1.5.Q8_0.gguf',
     url: 'https://modelscope.cn/api/v1/models/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/repo?Revision=master&FilePath=bge-small-en-v1.5-q8_0.gguf',
-    size: '~290MB',
-    type: '嵌入模型',
-    description: '高性能的英文嵌入模型，用于语义搜索和上下文分析。'
+    size: '~290MB', type: 'Embedding Model', description: 'High performance English embedding model.'
   },
 ];
-
-// --- 响应式状态 ---
-const modelsDir = ref('正在加载路径...');
+const modelsDir = ref('Loading path...');
 const localModels = ref([]);
 const downloadProgress = ref({});
 const globalError = ref('');
 const globalSuccess = ref('');
-const modelStatuses = ref({
-  chat: 'Uninitialized',
-  embedding: 'Uninitialized'
-});
+const modelStatuses = ref({ chat: 'Uninitialized', embedding: 'Uninitialized' });
 let unsubscribeDownloadProgress = null;
 
-// --- 计算属性 ---
-const isDownloading = computed(() => (fileName) => {
-  return fileName in downloadProgress.value;
-});
+const isDownloading = computed(() => (fileName) => fileName in downloadProgress.value);
 
-// --- 方法 ---
+// --- 核心方法: 设置管理 ---
+
+async function loadSettings() {
+  if (window.electronAPI) {
+    const data = await window.electronAPI.getSettings();
+    if (data) {
+      settings.notesPath = data.notesPath || '';
+      settings.deleteMode = data.deleteMode || 'trash';
+    }
+  }
+}
+
+async function updateSetting(key, value) {
+  if (window.electronAPI) {
+    await window.electronAPI.setSetting(key, value);
+    // 更新后重新加载笔记列表（如果是路径变更，后端会自动触发重索引）
+    if (key === 'notesPath') {
+      pathChanged.value = true;
+      setTimeout(() => { pathChanged.value = false; }, 5000);
+      await noteStore.fetchNotes();
+    }
+  }
+}
+
+async function changeNotesDir() {
+  if (window.electronAPI) {
+    const newPath = await window.electronAPI.selectFolder();
+    if (newPath) {
+      settings.notesPath = newPath;
+      await updateSetting('notesPath', newPath);
+    }
+  }
+}
+
+async function openInExplorer() {
+  if (window.electronAPI && settings.notesPath) {
+    await window.electronAPI.openPath(settings.notesPath);
+  }
+}
+
+// --- 核心方法: 模型管理 ---
 async function fetchLocalModels() {
-  if (window.electronAPI) {
-    localModels.value = await window.electronAPI.listLocalModels();
-  }
+  if (window.electronAPI) localModels.value = await window.electronAPI.listLocalModels();
 }
-
 async function fetchModelStatuses() {
-  if (window.electronAPI) {
-    modelStatuses.value = await window.electronAPI.getModelsStatus();
-  }
+  if (window.electronAPI) modelStatuses.value = await window.electronAPI.getModelsStatus();
 }
-
 async function downloadModel(model) {
   if (!window.electronAPI) return;
-  globalError.value = '';
-  globalSuccess.value = '';
+  globalError.value = ''; globalSuccess.value = '';
   downloadProgress.value[model.fileName] = 0;
-
   try {
     await window.electronAPI.downloadModel(model.url, model.fileName);
     await fetchLocalModels();
-    globalSuccess.value = `${model.fileName} 下载成功！请重启应用以加载新模型。`;
+    globalSuccess.value = `${model.fileName} downloaded! Restart app required.`;
   } catch (error) {
-    globalError.value = `下载 ${model.fileName} 失败: ${error.message}`;
-    console.error(error);
+    globalError.value = `Failed: ${error.message}`;
   } finally {
     delete downloadProgress.value[model.fileName];
-    setTimeout(() => {
-      globalSuccess.value = '';
-      globalError.value = '';
-    }, 8000);
+    setTimeout(() => { globalSuccess.value = ''; globalError.value = ''; }, 8000);
   }
 }
 
-// --- 状态展示辅助函数 ---
-const formatStatusText = (status) => {
-  const map = {
-    'Uninitialized': '正在初始化...',
-    'Loading': '加载中...',
-    'Ready': '准备就绪',
-    'Not Found': '未找到模型',
-    'Error': '加载失败'
-  };
-  return map[status] || '未知状态';
-};
+// --- 辅助显示函数 ---
+const formatStatusText = (s) => ({ 'Uninitialized': 'Initializing...', 'Loading': 'Loading...', 'Ready': 'Ready', 'Not Found': 'Not Found', 'Error': 'Error' }[s] || 'Unknown');
+const statusClass = (s) => ({ 'Ready': 'status-success', 'Not Found': 'status-warning', 'Error': 'status-danger' }[s] || 'status-loading');
+const statusIcon = (s) => ({ 'Ready': BrainCircuitIcon, 'Not Found': AlertTriangleIcon, 'Error': XCircleIcon }[s] || LoaderCircleIcon);
 
-const statusClass = (status) => {
-  const map = {
-    'Ready': 'status-success',
-    'Not Found': 'status-warning',
-    'Error': 'status-danger'
-  };
-  return map[status] || 'status-loading';
-};
-
-const statusIcon = (status) => {
-  const map = {
-    'Ready': BrainCircuitIcon,
-    'Not Found': AlertTriangleIcon,
-    'Error': XCircleIcon
-  };
-  return map[status] || LoaderCircleIcon;
-};
-
-// --- 生命周期钩子 ---
+// --- 生命周期 ---
 onMounted(async () => {
+  await loadSettings();
   if (window.electronAPI) {
     modelsDir.value = await window.electronAPI.getModelsDir();
     await fetchLocalModels();
     await fetchModelStatuses();
-
     unsubscribeDownloadProgress = window.electronAPI.onModelDownloadProgress((data) => {
       downloadProgress.value[data.fileName] = data.progress;
     });
   }
 });
-
 onUnmounted(() => {
-  if (unsubscribeDownloadProgress) {
-    unsubscribeDownloadProgress();
-  }
+  if (unsubscribeDownloadProgress) unsubscribeDownloadProgress();
 });
 </script>
 
 <style lang="scss" scoped>
-/* 定义状态颜色变量，确保在亮色和深色模式下都能正常工作 */
+/* 保持原有颜色变量... */
 :root {
-  --color-success-bg: #F0FDF4;
-  --color-success-border: #86EFAC;
-  --color-success-text: #15803D;
-  --color-success-icon: #10B981;
-
-  --color-danger-bg: #FEF2F2;
-  --color-danger-border: #FCA5A5;
-  --color-danger-text: #B91C1C;
-
-  --color-warning-bg: #FFFBEB;
-  --color-warning-border: #FDE68A;
-  --color-warning-text: #B45309;
+  --color-success-bg: #F0FDF4; --color-success-border: #86EFAC; --color-success-text: #15803D; --color-success-icon: #10B981;
+  --color-danger-bg: #FEF2F2; --color-danger-border: #FCA5A5; --color-danger-text: #B91C1C;
+  --color-warning-bg: #FFFBEB; --color-warning-border: #FDE68A; --color-warning-text: #B45309;
 }
 html.dark {
-  --color-success-bg: #052E16;
-  --color-success-border: #15803D;
-  --color-success-text: #6EE7B7;
-  --color-success-icon: #34D399;
-
-  --color-danger-bg: #450A0A;
-  --color-danger-border: #7F1D1D;
-  --color-danger-text: #F87171;
-
-  --color-warning-bg: #422006;
-  --color-warning-border: #92400E;
-  --color-warning-text: #FBBF24;
+  --color-success-bg: #052E16; --color-success-border: #15803D; --color-success-text: #6EE7B7; --color-success-icon: #34D399;
+  --color-danger-bg: #450A0A; --color-danger-border: #7F1D1D; --color-danger-text: #F87171;
+  --color-warning-bg: #422006; --color-warning-border: #92400E; --color-warning-text: #FBBF24;
 }
 
-/* 页面整体布局 */
-.settings-view {
-  padding: 40px 10%;
-  height: 100%;
-  overflow-y: auto;
-}
-.view-header {
-  margin-bottom: 32px;
-  border-bottom: 1px solid var(--border-light);
-  padding-bottom: 16px;
-  h2 { font-size: 24px; font-weight: 700; }
-  .sub-header { color: var(--text-secondary); font-size: 14px; }
-}
-.settings-section {
-  margin-bottom: 48px;
-}
-.section-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 16px;
-}
+.settings-view { padding: 40px 10%; height: 100%; overflow-y: auto; }
+.view-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-light); padding-bottom: 16px; h2 { font-size: 24px; font-weight: 700; } .sub-header { color: var(--text-secondary); font-size: 14px; } }
+.settings-section { margin-bottom: 48px; }
+.section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
 
-/* [新增] 外观设置项样式 */
+/* 通用设置项样式 */
 .setting-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border-light);
-  &:first-of-type {
-    padding-top: 0;
-  }
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 20px 0; border-bottom: 1px solid var(--border-light);
+  &:first-of-type { padding-top: 0; }
 }
 .setting-label {
-  .label-title {
-    font-weight: 500;
-    color: var(--text-primary);
-    display: block;
-  }
-  .label-desc {
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
+  max-width: 40%;
+  .label-title { font-weight: 500; color: var(--text-primary); display: block; margin-bottom: 4px; }
+  .label-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 }
-.theme-selector {
-  display: flex;
-  background-color: var(--bg-hover);
-  padding: 4px;
-  border-radius: var(--radius-md);
-  gap: 4px;
+
+.setting-control {
+  &.vertical { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: 50%; }
 }
-.theme-option {
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.2s;
-  user-select: none;
 
-  &:hover {
-    color: var(--text-primary);
-  }
-
-  &.active {
-    background-color: var(--bg-card);
-    color: var(--text-primary);
-    box-shadow: var(--shadow-card);
+/* 路径输入框组 */
+.path-display-group {
+  display: flex; width: 100%; gap: 8px;
+  .path-input {
+    flex: 1; padding: 6px 10px; font-size: 13px; font-family: var(--font-mono);
+    border: 1px solid var(--border-light); border-radius: 4px;
+    background: var(--bg-hover); color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 }
 
-/* 模型管理区域样式 */
-.section-description {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 24px;
-  line-height: 1.6;
-}
-.path-info {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  background: var(--bg-hover);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-.model-list {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-}
-.model-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.model-info {
-  .model-name { font-weight: 600; display: block; }
-  .model-meta { font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px; display: block; }
-  .model-desc { font-size: 13px; color: var(--text-secondary); }
-}
+/* 按钮样式 */
 .action-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-  white-space: nowrap;
-
-  &:hover { background: var(--border-light); color: var(--text-primary); }
-  &:disabled { opacity: 0.6; cursor: not-allowed; }
-  .icon-sm.success-icon { color: var(--color-success-icon); }
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  border-radius: 6px; background: var(--bg-hover); color: var(--text-primary);
+  font-size: 13px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s;
+  &:hover { background: var(--border-light); }
+  &.secondary { font-size: 12px; padding: 4px 10px; background: transparent; border: 1px solid var(--border-light); }
 }
 
-/* 状态面板和提示框样式 */
-.error-box, .success-box {
-  margin-top: 20px;
-  padding: 12px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-}
-.error-box { background: var(--color-danger-bg); color: var(--color-danger-text); border: 1px solid var(--color-danger-border); }
-.success-box { background: var(--color-success-bg); color: var(--color-success-text); border: 1px solid var(--color-success-border); }
+/* 警告文本 */
+.warning-text { font-size: 12px; color: var(--color-warning-text); display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.icon-xs { width: 14px; height: 14px; }
 
-.status-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.status-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-app);
-}
-.status-info {
-  .status-name { font-weight: 600; font-size: 14px; display: block; }
-  .status-model-name { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
-}
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 6px;
-
-  &.status-loading {
-    color: var(--text-secondary);
-    background-color: var(--bg-hover);
-    .icon-sm { animation: spin 1s linear infinite; }
-  }
-  &.status-success {
-    color: var(--color-success-text);
-    background-color: var(--color-success-bg);
-  }
-  &.status-warning {
-    color: var(--color-warning-text);
-    background-color: var(--color-warning-bg);
-  }
-  &.status-danger {
-    color: var(--color-danger-text);
-    background-color: var(--color-danger-bg);
-  }
+/* 单选框组 */
+.radio-group { display: flex; flex-direction: column; gap: 8px; }
+.radio-label {
+  display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--text-primary); cursor: pointer;
+  input[type="radio"] { accent-color: var(--color-brand); }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+/* 其他样式复用之前的... */
+.theme-selector { display: flex; background: var(--bg-hover); padding: 4px; border-radius: 8px; gap: 4px; }
+.theme-option { padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; display: flex; gap: 6px; color: var(--text-secondary); &.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--shadow-card); } }
+.model-list { display: grid; gap: 16px; }
+.model-card { background: var(--bg-card); border: 1px solid var(--border-light); padding: 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+.status-panel { background: var(--bg-card); border: 1px solid var(--border-light); padding: 8px; border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
+.status-item { display: flex; justify-content: space-between; padding: 12px 16px; background: var(--bg-app); border-radius: 4px; align-items: center; }
+.status-indicator { display: flex; gap: 8px; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; &.status-success { background: var(--color-success-bg); color: var(--color-success-text); } }
+.error-box { background: var(--color-danger-bg); color: var(--color-danger-text); padding: 12px; border-radius: 4px; margin-top: 16px; }
+.success-box { background: var(--color-success-bg); color: var(--color-success-text); padding: 12px; border-radius: 4px; margin-top: 16px; }
 </style>

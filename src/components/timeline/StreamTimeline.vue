@@ -26,18 +26,18 @@
       <!-- 加载中状态 -->
       <div v-if="noteStore.loading" class="state-msg">
         <div class="loading-spinner"></div>
-        <span>加载笔记中...</span>
+        <span>Loading notes...</span>
       </div>
 
       <!-- 空状态 / 搜索无结果 -->
       <div v-else-if="noteStore.notes.length === 0" class="state-msg empty">
         <div v-if="noteStore.searchQuery">
-          <p>🔍 没有找到关于 "<strong>{{ noteStore.searchQuery }}</strong>" 的笔记</p>
-          <button class="reset-btn" @click="noteStore.setSearchQuery('')">清空搜索</button>
+          <p>🔍 No notes found for "<strong>{{ noteStore.searchQuery }}</strong>"</p>
+          <button class="reset-btn" @click="noteStore.setSearchQuery('')">Clear Search</button>
         </div>
         <div v-else>
-          <p>📭 还没有任何笔记</p>
-          <p class="sub">在上方写下你的第一个想法吧！</p>
+          <p>📭 No notes yet.</p>
+          <p class="sub">Write your first thought above!</p>
         </div>
       </div>
 
@@ -135,7 +135,8 @@ const handleSaveNewNote = async (payload) => {
 const handleDelete = async (id) => {
   // 弹出确认框，增强鲁棒性
   const noteToDelete = noteStore.getNoteById(id);
-  if (noteToDelete && confirm(`确定要删除笔记 "${noteToDelete.title || noteToDelete.id}" 吗？`)) {
+  // [修改点] 确认信息改为英文
+  if (noteToDelete && confirm(`Are you sure you want to delete note "${noteToDelete.title || noteToDelete.id}"?`)) {
     await noteStore.deleteNote(id);
   }
 };

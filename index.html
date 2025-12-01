@@ -1,11 +1,19 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- 解决 Electron Security Warning: 添加内容安全策略 (CSP) -->
     <!-- 开发环境下允许 'unsafe-eval' 是因为 Vue/Vite 需要它，生产环境应更严格 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval';">
+    <meta http-equiv="Content-Security-Policy"
+          content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' blob: data:;
+        font-src 'self';
+        connect-src 'self';
+      ">
 
     <title>SolverNote</title>
 </head>

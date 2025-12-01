@@ -3,15 +3,15 @@
     <!-- 状态一: 正在加载笔记 -->
     <div v-if="isLoading" class="state-container">
       <div class="loading-spinner"></div>
-      <span>正在加载笔记...</span>
+      <span>Loading note...</span>
     </div>
 
     <!-- 状态二: 笔记未找到 -->
     <div v-else-if="!note" class="state-container empty">
-      <p class="error-title">:( 笔记不存在</p>
-      <p>无法找到 ID 为 "{{ noteId }}" 的笔记。</p>
-      <p>它可能已被删除或移动。</p>
-      <router-link to="/" class="back-home-link">返回主页</router-link>
+      <p class="error-title">:( Note Not Found</p>
+      <p>Could not find note with ID "{{ noteId }}".</p>
+      <p>It may have been deleted or moved.</p>
+      <router-link to="/" class="back-home-link">Return to Home</router-link>
     </div>
 
     <!-- 状态三: 笔记内容展示 (核心视图) -->
@@ -21,17 +21,17 @@
         <header class="note-actions-header">
           <div class="header-placeholder"></div>
           <div class="actions-group">
-            <button v-if="isEditing" class="action-btn" @click="handleCancelEdit" title="放弃修改并返回预览">
+            <button v-if="isEditing" class="action-btn" @click="handleCancelEdit" title="Cancel changes">
               <XIcon class="icon" />
-              <span>取消</span>
+              <span>Cancel</span>
             </button>
-            <button v-else class="action-btn" @click="enterEditMode" title="编辑笔记">
+            <button v-else class="action-btn" @click="enterEditMode" title="Edit note">
               <Edit3Icon class="icon" />
-              <span>编辑</span>
+              <span>Edit</span>
             </button>
-            <button class="action-btn danger" @click="handleDelete" title="删除笔记">
+            <button class="action-btn danger" @click="handleDelete" title="Delete note">
               <Trash2Icon class="icon" />
-              <span>删除</span>
+              <span>Delete</span>
             </button>
           </div>
         </header>
@@ -52,7 +52,7 @@
           <!-- 预览模式: 显示渲染后的 HTML -->
           <div v-else class="preview-mode-content">
             <div class="note-meta-header">
-              <h1 class="note-title">{{ note.title || '无标题笔记' }}</h1>
+              <h1 class="note-title">{{ note.title || 'Untitled Note' }}</h1>
               <div class="note-meta">
                 <span>{{ formattedTimestamp }}</span>
                 <template v-if="note.tags && note.tags.length > 0">
@@ -104,7 +104,7 @@ const note = computed(() => noteStore.getNoteById(props.noteId));
 const formattedTimestamp = computed(() => {
   // 使用 .value 是因为 note 是一个 computed ref
   if (!note.value?.timestamp) return '';
-  return dayjs(note.value.timestamp).format('YYYY年MM月DD日 HH:mm');
+  return dayjs(note.value.timestamp).format('MMM D, YYYY HH:mm');
 });
 const renderedContent = computed(() => {
   if (!note.value?.content) return '';
@@ -160,7 +160,8 @@ const handleUpdateAndExit = async (payload) => {
 
 const handleDelete = async () => {
   if (!note.value) return;
-  if (!confirm(`确定要删除笔记 "${note.value.title || note.value.id}" 吗？`)) return;
+  // [修改点] 确认信息改为英文
+  if (!confirm(`Are you sure you want to delete note "${note.value.title || note.value.id}"?`)) return;
 
   const allNotes = noteStore._allNotesCache;
   const currentIndex = allNotes.findIndex(n => n.id === note.value.id);

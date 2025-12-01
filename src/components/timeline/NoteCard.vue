@@ -29,10 +29,10 @@
           [核心重构] 编辑按钮现在调用 handleEdit 方法，
           该方法将导航到单页视图的编辑模式。
         -->
-        <button class="action-btn" @click="handleEdit" title="编辑此笔记">
+        <button class="action-btn" @click="handleEdit" title="Edit this note">
           <Edit2Icon class="icon-xs" />
         </button>
-        <button class="action-btn danger" @click="$emit('delete', note.id)" title="删除">
+        <button class="action-btn danger" @click="$emit('delete', note.id)" title="Delete">
           <Trash2Icon class="icon-xs" />
         </button>
       </div>
@@ -109,7 +109,6 @@ const handleEdit = () => {
 
   &:hover {
     border-color: var(--border-hover);
-    transform: translateY(-2px);
     box-shadow: var(--shadow-card);
     .actions-group {
       opacity: 1;

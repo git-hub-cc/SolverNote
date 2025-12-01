@@ -66,6 +66,20 @@
             placeholder="Add tag (Enter to add)..."
             class="tag-input"
         />
+
+        <!-- [新增] AI 生成 Tags 按钮 -->
+        <button
+            v-if="activeTab === 'write' && localContent.trim().length > 10"
+            class="ai-tag-btn"
+            :class="{ 'loading': isGeneratingTags }"
+            @click="handleGenerateTags"
+            title="Auto-generate tags with AI"
+            :disabled="isGeneratingTags"
+        >
+          <SparklesIcon v-if="!isGeneratingTags" class="icon-xs" />
+          <div v-else class="spinner-xs"></div>
+          <span>{{ isGeneratingTags ? 'Generating...' : 'Auto Tags' }}</span>
+        </button>
       </div>
     </div>
 
@@ -110,6 +124,7 @@ import {
   Bold as BoldIcon, Italic as ItalicIcon, Strikethrough as StrikethroughIcon,
   Code as CodeIcon, List as ListIcon, ListChecks as ListChecksIcon, Heading2 as Heading2Icon,
   Link as LinkIcon, Quote as QuoteIcon, Hash as HashIcon, Send as SendIcon, Save as SaveIcon,
+  Sparkles as SparklesIcon // [新增]
 } from 'lucide-vue-next'
 import { useSolverStore } from '@/stores/solverStore'
 import { renderMarkdown } from '@/utils/markdownRenderer'
@@ -135,6 +150,7 @@ const isFocused = ref(false)
 const isTagInputFocused = ref(false)
 const tagInput = ref('')
 const tagInputRef = ref(null)
+const isGeneratingTags = ref(false) // [新增]
 let debounceTimer = null;
 
 // --- 计算属性 ---
@@ -143,7 +159,8 @@ const previewHtml = computed(() => {
   return renderMarkdown(localContent.value)
 })
 const isEmpty = computed(() => !localContent.value.trim())
-const shouldShowTags = computed(() => localTags.value.length > 0 || isTagInputFocused.value)
+// [修改] 只要有内容，就允许显示 tag 区域，以便显示 Auto Tags 按钮
+const shouldShowTags = computed(() => localTags.value.length > 0 || isTagInputFocused.value || localContent.value.length > 0)
 
 
 // --- 辅助函数 ---
@@ -239,6 +256,28 @@ const addTag = () => {
 const removeTag = (index) => { localTags.value.splice(index, 1) }
 const handleBackspace = () => { if (tagInput.value === '' && localTags.value.length > 0) { localTags.value.pop() } }
 
+// --- [新增] 生成 Tags 的处理函数 ---
+const handleGenerateTags = async () => {
+  if (isGeneratingTags.value || !localContent.value.trim()) return
+
+  isGeneratingTags.value = true
+  try {
+    const newTags = await solverStore.generateTagsFromContent(localContent.value)
+    if (newTags.length > 0) {
+      // 合并标签，避免重复
+      newTags.forEach(tag => {
+        if (!localTags.value.includes(tag)) {
+          localTags.value.push(tag)
+        }
+      })
+    }
+  } finally {
+    isGeneratingTags.value = false
+    // 聚焦回输入框，方便用户继续编辑
+    focusTagInput()
+  }
+}
+
 // --- 生命周期钩子 ---
 onMounted(() => {
   resizeTextarea()
@@ -256,13 +295,6 @@ defineExpose({ clearEditor })
 </script>
 
 <style lang="scss" scoped>
-/*
- * [核心修改] 移除了之前在组件内部定义的 :root 和 html.dark 规则。
- * 现在所有颜色变量都由外部的 _variables.scss 文件统一管理。
- */
-// :root { --bg-edit-mode: #FAFAFF; }
-// html.dark { --bg-edit-mode: rgba(99, 102, 241, 0.05); }
-
 .smart-editor {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -280,11 +312,6 @@ defineExpose({ clearEditor })
   box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }
 
-/*
- * [核心修改] 在 `.is-edit-mode` 样式中，
- * 将 `background-color` 的硬编码值替换为我们在 _variables.scss 中新定义的 `--bg-edit-mode` 变量。
- * 这样，当应用切换亮/暗主题时，这个背景色会自动、正确地更新。
- */
 .smart-editor.is-edit-mode {
   border-color: var(--color-brand);
   background-color: var(--bg-edit-mode);
@@ -448,6 +475,49 @@ defineExpose({ clearEditor })
   }
 }
 
+/* [新增] AI 生成按钮样式 */
+.ai-tag-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 100%);
+  color: var(--color-brand);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: auto; /* 推到右侧 */
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.15);
+    border-color: var(--color-brand);
+  }
+
+  &:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  .icon-xs {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* Loading Spinner for AI Tag Button */
+.spinner-xs {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-brand);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .editor-footer {
   display: flex;
   justify-content: space-between;
@@ -527,5 +597,9 @@ defineExpose({ clearEditor })
 .icon-sm {
   width: 16px;
   height: 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>

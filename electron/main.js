@@ -1,31 +1,50 @@
 // electron/main.js
 
-// [核心修改] 从 electron 中额外引入 Menu 模块
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog, shell } = require('electron');
 const path = require('path');
 const chokidar = require('chokidar');
 const fs = require('fs-extra');
-const log = require('electron-log'); // 引入日志模块
+const log = require('electron-log');
+const Store = require('electron-store');
 
 // --- 日志配置 ---
 log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}';
 log.transports.file.resolvePath = () => path.join(app.getPath('userData'), 'logs/main.log');
 log.level = process.env.SOLVER_LOG_LEVEL || (app.isPackaged ? 'info' : 'debug');
 
-// 重定向 console 到文件日志
 console.log = log.log;
 console.error = log.error;
 console.warn = log.warn;
 console.info = log.info;
 console.debug = log.debug;
 
+// --- 初始化 Store ---
+const store = new Store({
+    schema: {
+        notesPath: {
+            type: 'string',
+            default: path.join(process.cwd(), 'notes')
+        },
+        deleteMode: {
+            type: 'string',
+            enum: ['trash', 'permanent'],
+            default: 'trash'
+        }
+    }
+});
+
 // 引入本地模块
-// [核心修改] 从导入列表中移除 handleSearchNotes
 const {
     handleLoadNotes,
     handleSaveNote,
-    handleDeleteNote
+    handleDeleteNote,
+    // [Phase 2 新增] 引入新的文件系统处理函数
+    handleGetFileTree,
+    handleCreateFolder,
+    handleRenamePath,
+    handleMovePath
 } = require('./handlers');
+
 const modelManager = require('./services/modelManager');
 const llmService = require('./services/llmService');
 const vectorService = require('./services/vectorService');
@@ -44,58 +63,86 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let watcher = null;
 
-// --- 辅助函数 ---
+// --- 辅助函数：获取当前配置的笔记目录 ---
 function getNotesDir() {
-    const noteDir = path.join(process.cwd(), 'notes');
-    fs.ensureDirSync(noteDir);
-    return noteDir;
+    const configuredPath = store.get('notesPath');
+    fs.ensureDirSync(configuredPath);
+    return configuredPath;
 }
 
 // --- 核心业务函数  ---
 async function reindexAllNotes() {
-    console.info('[AI] 开始对所有现有笔记进行全量重新索引...');
+    console.info('[AI] Starting full re-index...');
     try {
         const allNotes = await handleLoadNotes();
         if (allNotes.length === 0) {
-            console.info('[AI] 未发现现有笔记，跳过索引。');
+            console.info('[AI] No notes to index.');
             return;
         }
+
         let indexedCount = 0;
         for (const note of allNotes) {
             await vectorService.indexNote(note.id, note.rawContent);
             indexedCount++;
         }
-        console.info(`[AI] 全量索引完成，共处理 ${indexedCount} 篇笔记。`);
+        console.info(`[AI] Re-index complete. Processed ${indexedCount} notes.`);
     } catch (error) {
-        console.error('[AI] 全量索引过程中发生错误:', error);
+        console.error('[AI] Error during re-indexing:', error);
     }
 }
 
+// --- 文件监听器设置 ---
 function setupFileWatcher() {
+    if (watcher) {
+        watcher.close().then(() => console.info('Old file watcher closed.'));
+    }
+
     const notesDir = getNotesDir();
-    watcher = chokidar.watch(path.join(notesDir, '*.md'), {
+
+    // 配置递归监听
+    watcher = chokidar.watch(path.join(notesDir, '**/*.md'), {
         ignored: /(^|[\/\\])\../,
         persistent: true,
         ignoreInitial: true,
+        depth: 99,
+        awaitWriteFinish: {
+            stabilityThreshold: 500,
+            pollInterval: 100
+        }
     });
 
-    console.info(`正在监听笔记目录: ${notesDir}`);
+    console.info(`Watching directory: ${notesDir}`);
+
+    const getRelativeId = (filePath) => {
+        return path.relative(notesDir, filePath).split(path.sep).join('/');
+    };
+
+    const notifyFrontend = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('notes:updated');
+        }
+    };
 
     watcher.on('add', async (filePath) => {
         const rawContent = await fs.readFile(filePath, 'utf-8');
-        const noteId = path.basename(filePath);
-        console.info(`检测到新文件: ${noteId}，准备索引...`);
+        const noteId = getRelativeId(filePath);
+        console.info(`New file detected: ${noteId}, indexing...`);
+        notifyFrontend();
         await vectorService.indexNote(noteId, rawContent);
     });
+
     watcher.on('change', async (filePath) => {
         const rawContent = await fs.readFile(filePath, 'utf-8');
-        const noteId = path.basename(filePath);
-        console.info(`检测到文件变更: ${noteId}，准备重新索引...`);
+        const noteId = getRelativeId(filePath);
+        console.info(`File changed: ${noteId}, re-indexing...`);
+        notifyFrontend();
         await vectorService.indexNote(noteId, rawContent);
     });
+
     watcher.on('unlink', (filePath) => {
-        const noteId = path.basename(filePath);
-        console.info(`检测到文件删除: ${noteId}，准备删除索引...`);
+        const noteId = getRelativeId(filePath);
+        console.info(`File deleted: ${noteId}, removing index...`);
+        notifyFrontend();
         vectorService.deleteNoteIndex(noteId);
     });
 }
@@ -106,47 +153,43 @@ async function initializeAIServices() {
     // 初始化聊天模型
     const chatModelPath = path.join(modelsDir, CHAT_MODEL_FILENAME);
     modelStatus.chat = 'Loading';
-    console.info(`[AI] 正在检查聊天模型: ${chatModelPath}`);
     if (await fs.pathExists(chatModelPath)) {
         try {
             const success = await llmService.loadModel(chatModelPath);
             if (success) {
                 modelStatus.chat = 'Ready';
-                console.info('[AI] 聊天模型已准备就绪。');
+                console.info('[AI] Chat model ready.');
             } else {
-                throw new Error('llmService.loadModel返回false');
+                throw new Error('llmService.loadModel returned false');
             }
         } catch (error) {
             modelStatus.chat = 'Error';
-            console.error('[AI] 加载聊天模型失败:', error);
+            console.error('[AI] Failed to load chat model:', error);
         }
     } else {
         modelStatus.chat = 'Not Found';
-        console.warn(`[AI] 未找到聊天模型: ${CHAT_MODEL_FILENAME}。请在设置中下载。`);
     }
 
     // 初始化嵌入模型
     const embeddingModelPath = path.join(modelsDir, EMBEDDING_MODEL_FILENAME);
     modelStatus.embedding = 'Loading';
-    console.info(`[AI] 正在检查嵌入模型: ${embeddingModelPath}`);
     if (await fs.pathExists(embeddingModelPath)) {
         try {
             const success = await vectorService.initialize(embeddingModelPath);
             if (success) {
                 modelStatus.embedding = 'Ready';
-                console.info('[AI] 嵌入模型和向量服务已准备就绪。');
-                await reindexAllNotes(); // 启动时重建索引以确保数据最新
-                setupFileWatcher();     // 启动文件监听
+                console.info('[AI] Vector service ready.');
+                await reindexAllNotes();
+                setupFileWatcher();
             } else {
-                throw new Error('vectorService.initialize返回false');
+                throw new Error('vectorService.initialize returned false');
             }
         } catch (error) {
             modelStatus.embedding = 'Error';
-            console.error('[AI] 初始化向量服务失败:', error);
+            console.error('[AI] Failed to initialize vector service:', error);
         }
     } else {
         modelStatus.embedding = 'Not Found';
-        console.warn(`[AI] 未找到嵌入模型: ${EMBEDDING_MODEL_FILENAME}。语义搜索功能将不可用，请在设置中下载。`);
     }
 }
 
@@ -162,7 +205,6 @@ function createWindow() {
         }
     });
 
-    // 监听系统主题变化，并通知渲染进程
     nativeTheme.on('updated', () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
@@ -178,59 +220,69 @@ function createWindow() {
     }
 }
 
-// --- Electron 应用生命周期 ---
 app.whenReady().then(async () => {
-    console.info('================ 应用启动 ================');
-    console.info(`日志级别设置为: ${log.level}`);
-
-    // --- [核心修改] 隐藏菜单栏 (仅在非 macOS 平台) ---
-    // 在 Windows 和 Linux 上，隐藏菜单栏可以提供更简洁的用户界面。
-    // 在 macOS 上，菜单栏是系统级的，包含重要操作（如退出），因此予以保留以符合平台规范。
+    console.info('================ APP STARTED ================');
     if (process.platform !== 'darwin') {
         Menu.setApplicationMenu(null);
     }
 
-    // --- 注册 IPC 处理程序 ---
+    // --- 注册基础 IPC ---
     ipcMain.handle('notes:load', handleLoadNotes);
     ipcMain.handle('notes:save', handleSaveNote);
-    // [核心修改] 移除后端的搜索 IPC 处理器
-    // ipcMain.handle('notes:search', handleSearchNotes);
     ipcMain.handle('notes:delete', handleDeleteNote);
 
-    ipcMain.handle('models:list', modelManager.listLocalModels);
-    ipcMain.handle('models:download', (event, { url, fileName }) => {
-        return modelManager.downloadModel(mainWindow, url, fileName);
+    // --- [Phase 2 新增] 注册文件系统 IPC ---
+    // 这里注册 preload.js 中调用的 fs:* 通道
+    ipcMain.handle('fs:get-tree', handleGetFileTree);
+    ipcMain.handle('fs:create-folder', handleCreateFolder);
+    ipcMain.handle('fs:rename', handleRenamePath);
+    ipcMain.handle('fs:move', handleMovePath);
+
+    // --- 注册设置 IPC ---
+    ipcMain.handle('settings:get', () => store.store);
+    ipcMain.handle('settings:set', (event, key, value) => {
+        store.set(key, value);
+        if (key === 'notesPath') {
+            console.info(`[Settings] Notes path changed to: ${value}`);
+            setupFileWatcher();
+            reindexAllNotes();
+        }
     });
+    ipcMain.handle('settings:select-folder', async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openDirectory']
+        });
+        return (result.canceled || result.filePaths.length === 0) ? null : result.filePaths[0];
+    });
+    ipcMain.handle('shell:open-path', async (event, pathStr) => {
+        const target = pathStr || getNotesDir();
+        await shell.openPath(target);
+    });
+
+    // --- 注册模型与AI IPC ---
+    ipcMain.handle('models:list', modelManager.listLocalModels);
+    ipcMain.handle('models:download', (event, { url, fileName }) => modelManager.downloadModel(mainWindow, url, fileName));
     ipcMain.handle('models:get-dir', modelManager.getModelsDir);
     ipcMain.handle('models:get-status', () => modelStatus);
 
-    ipcMain.handle('llm:start-chat', (event, userPrompt, contextContent) => {
-        llmService.startChatStream(mainWindow, userPrompt, contextContent);
-    });
-
-    ipcMain.handle('vectors:search', (event, { queryText, traceId, excludeId }) => {
-        console.info(`[IPC][${traceId}] 收到向量搜索请求。`, {
-            payload: { queryText: queryText?.substring(0, 50), excludeId }
-        });
-        return vectorService.searchSimilarNotes(queryText, traceId, excludeId);
-    });
-
-    // --- 主题相关 IPC 处理程序 ---
-    ipcMain.handle('theme:get-system', () => {
-        return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-    });
-
-    ipcMain.on('theme:set', (event, theme) => {
-        const validThemes = new Set(['light', 'dark', 'system']);
-        if (validThemes.has(theme)) {
-            nativeTheme.themeSource = theme;
-            console.info(`[Theme] 已将原生主题设置为: ${theme}`);
-        } else {
-            console.warn(`[Theme] 收到无效的主题设置请求: ${theme}`);
+    ipcMain.handle('llm:start-chat', (event, userPrompt, contextContent) => llmService.startChatStream(mainWindow, userPrompt, contextContent));
+    ipcMain.handle('llm:generate-tags', async (event, prompt) => {
+        try {
+            const result = await llmService.generateCompletion(prompt);
+            return { success: true, text: result };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     });
+    ipcMain.handle('vectors:search', (event, { queryText, traceId, excludeId }) => vectorService.searchSimilarNotes(queryText, traceId, excludeId));
 
-    // 初始化服务并创建窗口
+    // --- 主题 IPC ---
+    ipcMain.handle('theme:get-system', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+    ipcMain.on('theme:set', (event, theme) => {
+        const validThemes = new Set(['light', 'dark', 'system']);
+        if (validThemes.has(theme)) nativeTheme.themeSource = theme;
+    });
+
     await initializeAIServices();
     createWindow();
 

@@ -7,7 +7,7 @@
         <div class="status-dot" :class="{ active: solverStore.isThinking }"></div>
       </div>
 
-      <button class="close-btn" @click="$emit('close')" title="关闭侧边栏">
+      <button class="close-btn" @click="$emit('close')" title="Close Sidebar">
         <PanelRightCloseIcon class="icon-sm" />
       </button>
     </div>
@@ -19,8 +19,8 @@
         <div v-for="(msg, index) in solverStore.chatHistory" :key="index" class="chat-bubble-wrapper">
           <div class="chat-bubble" :class="msg.role">
             <div v-if="msg.role === 'ai'" class="bubble-actions">
-              <button @click="handleCopyToClipboard(msg.text)" title="复制"><CopyIcon class="icon-xs" /></button>
-              <button @click="handleInsertIntoNote(msg.text)" title="插入到笔记"><CornerDownLeftIcon class="icon-xs" /></button>
+              <button @click="handleCopyToClipboard(msg.text)" title="Copy"><CopyIcon class="icon-xs" /></button>
+              <button @click="handleInsertIntoNote(msg.text)" title="Insert into Note"><CornerDownLeftIcon class="icon-xs" /></button>
             </div>
             <div class="bubble-text" v-html="renderMarkdown(msg.text)"></div>
           </div>
@@ -39,10 +39,10 @@
           {{ contextMetaText }}
         </div>
         <div v-if="solverStore.isThinking" class="loading-state">
-          思考中...
+          Thinking...
         </div>
         <div v-else-if="solverStore.relatedContexts.length === 0" class="empty-state">
-          未找到相关内容。
+          No related content found.
         </div>
         <div v-else>
           <router-link
@@ -50,7 +50,7 @@
               :key="ref.id"
               :to="{ name: 'note-view', params: { noteId: ref.id } }"
               class="ref-card"
-              title="点击跳转到该笔记"
+              title="Click to view note"
           >
             <div class="ref-header">
               <span class="ref-title">{{ ref.title || ref.id }}</span>
@@ -78,7 +78,7 @@
               class="toggle-checkbox"
           />
           <span class="toggle-switch"></span>
-          关联当前{{ currentViewName }}内容
+          Include {{ currentViewName }} context
         </label>
       </div>
 
@@ -87,7 +87,7 @@
         <textarea
             ref="textareaRef"
             v-model="chatInput"
-            placeholder="向 Solver 提问..."
+            placeholder="Ask Solver..."
             class="chat-textarea"
             :disabled="solverStore.isThinking"
             @input="autoResizeTextarea"
@@ -101,7 +101,7 @@
       <div v-else class="context-actions">
         <button class="switch-to-chat-btn" @click="handleSwitchToChat">
           <MessageSquarePlusIcon class="icon-sm"/>
-          <span>向 AI 提问</span>
+          <span>Ask AI</span>
         </button>
       </div>
     </footer>
@@ -133,8 +133,8 @@ const textareaRef = ref(null)
 const contentAreaRef = ref(null)
 
 const currentViewName = computed(() => {
-  if (route.name === 'note-view') return '笔记'
-  if (route.name === 'home') return '草稿'
+  if (route.name === 'note-view') return 'note'
+  if (route.name === 'home') return 'draft'
   return ''
 });
 
@@ -143,17 +143,17 @@ const isContextSwitchVisible = computed(() => {
 });
 
 const currentTitle = computed(() => {
-  return solverStore.mode === 'chat' ? '智能助手 (Solver)' : '智能关联 (Context)'
+  return solverStore.mode === 'chat' ? 'AI Assistant (Solver)' : 'Context (Related)'
 })
 
 const contextMetaText = computed(() => {
   if (route.name === 'note-view') {
-    return '基于当前选中笔记的智能关联'
+    return 'CONTEXT BASED ON CURRENT NOTE'
   }
   if (route.name === 'home') {
-    return '基于当前草稿内容的智能关联'
+    return 'CONTEXT BASED ON CURRENT DRAFT'
   }
-  return '智能关联'
+  return 'RELATED CONTEXT'
 });
 
 const autoResizeTextarea = () => {
@@ -206,7 +206,7 @@ const handleCopyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text)
   } catch (err) {
-    console.error('复制失败:', err)
+    console.error('Failed to copy:', err)
   }
 }
 
@@ -214,7 +214,7 @@ const handleInsertIntoNote = (text) => {
   if (route.name === 'note-view' && route.params.noteId) {
     // 这是一个待实现的功能：需要一种方式通知 SingleNoteView 更新其 localContent
     // noteStore.insertTextIntoNote(text) // 假设 noteStore 有一个 action 可以触发事件
-    alert("插入功能正在开发中！");
+    alert("Insertion feature is under development!");
   } else if (route.name === 'home') {
     const currentDraft = solverStore.draftContext;
     solverStore.setDraftContext(currentDraft + `\n\n${text}`);

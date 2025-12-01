@@ -1,56 +1,45 @@
 import { defineStore } from 'pinia'
+import router from '@/router'
 
-// 模拟数据 (在浏览器环境开发时，作为回退方案)
+// 模拟数据 (开发回退)
 const MOCK_NOTES = [
     {
         id: 'mock-1.md',
-        content: '**欢迎使用 SolverNote**\n这是一个模拟数据。\n\n> 提示：请在 Electron 中启动以启用文件读写。',
+        content: '**Welcome to SolverNote**',
         timestamp: new Date().toISOString(),
         tags: ['welcome'],
-        title: '欢迎笔记'
-    },
-    {
-        id: 'mock-2.md',
-        content: '- [x] 任务 A\n- [ ] 任务 B\n\n支持标准 Markdown 渲染。',
-        timestamp: new Date(Date.now() - 86400000).toISOString(),
-        tags: ['todo'],
-        title: '待办事项'
+        title: 'Welcome Note'
     }
 ]
 
 export const useNoteStore = defineStore('notes', {
     state: () => ({
         /**
-         * 内部笔记缓存。
-         * 这是所有笔记的唯一真实来源 (Single Source of Truth)，直接从后端加载。
-         * @type {Array<Object>}
+         * 扁平笔记列表（用于搜索和内容展示）
          */
         _allNotesCache: [],
 
-        // --- 核心状态 ---
-        loading: false,       // 是否正在从后端加载数据
-        error: null,          // 错误信息
-        searchQuery: '',      // 当前的搜索关键词
-        isSyncing: false,     // 是否正在与后端同步（保存/删除）
+        /**
+         * [Phase 2 新增] 完整的文件树结构
+         */
+        fileTree: [],
 
-        // --- UI 交互状态 ---
-        selectedNoteId: null, // 当前在 UI 上高亮的笔记ID (可以是时间线或单页视图)
-        scrollToNoteId: null  // 用于触发滚动到指定笔记的状态
+        loading: false,
+        error: null,
+        searchQuery: '',
+        isSyncing: false,
+
+        selectedNoteId: null,
+        scrollToNoteId: null,
+
+        _listeners: []
     }),
 
     getters: {
-        /**
-         * 根据 ID 高效查找笔记的 Getter。
-         * @returns {(id: string) => Object | undefined} 一个接受笔记 ID 并返回笔记对象的函数。
-         */
         getNoteById: (state) => {
             return (id) => state._allNotesCache.find(note => note.id === id);
         },
 
-        /**
-         * `notes` getter 根据 `searchQuery` 动态地从 `_allNotesCache` 中过滤出要显示的笔记。
-         * 这是非破坏性的，原始缓存 `_allNotesCache` 始终保持完整。
-         */
         notes: (state) => {
             if (!state.searchQuery || state.searchQuery.trim() === '') {
                 return state._allNotesCache;
@@ -58,27 +47,20 @@ export const useNoteStore = defineStore('notes', {
             const lowerQuery = state.searchQuery.toLowerCase().trim();
             return state._allNotesCache.filter(note => {
                 const inTitle = note.title && note.title.toLowerCase().includes(lowerQuery);
-                // [核心修改] 增加对 note.id (文件名) 的搜索，使前后端逻辑统一
                 const inId = note.id.toLowerCase().includes(lowerQuery);
                 const inContent = note.content.toLowerCase().includes(lowerQuery);
                 const inTags = note.tags && note.tags.some(tag => tag.toLowerCase().includes(lowerQuery));
-                // [核心修改] 将 inId 加入到最终的布尔判断中
                 return inTitle || inId || inContent || inTags;
             });
         },
 
-        /**
-         * `allTags` getter 必须从完整的缓存 `_allNotesCache` 中计算，
-         * 确保无论当前搜索条件是什么，它总能返回所有标签的正确统计。
-         */
         allTags: (state) => {
             const tagMap = new Map();
             state._allNotesCache.forEach(note => {
                 if (note.tags && Array.isArray(note.tags)) {
                     note.tags.forEach(tag => {
                         if (typeof tag !== 'string' || !tag.trim()) return;
-                        const normalizedTag = tag.trim();
-                        tagMap.set(normalizedTag, (tagMap.get(normalizedTag) || 0) + 1);
+                        tagMap.set(tag.trim(), (tagMap.get(tag.trim()) || 0) + 1);
                     });
                 }
             });
@@ -89,9 +71,23 @@ export const useNoteStore = defineStore('notes', {
     },
 
     actions: {
-        /**
-         * 从后端获取所有笔记并填充缓存。
-         */
+        setupListeners() {
+            this.cleanupListeners();
+            if (window.electronAPI) {
+                const unsubscribe = window.electronAPI.onNotesUpdated(() => {
+                    console.log('[Store] Notes updated externally, reloading...');
+                    this.fetchNotes();
+                    this.fetchFileTree(); // 同时刷新树
+                });
+                this._listeners.push(unsubscribe);
+            }
+        },
+
+        cleanupListeners() {
+            this._listeners.forEach(unsub => unsub());
+            this._listeners = [];
+        },
+
         async fetchNotes() {
             this.loading = true;
             this.error = null;
@@ -101,9 +97,7 @@ export const useNoteStore = defineStore('notes', {
                 } else {
                     console.warn('Electron API not found, using mock data.');
                     await new Promise(r => setTimeout(r, 300));
-                    if (this._allNotesCache.length === 0) {
-                        this._allNotesCache = MOCK_NOTES;
-                    }
+                    if (this._allNotesCache.length === 0) this._allNotesCache = MOCK_NOTES;
                 }
             } catch (err) {
                 console.error('Failed to fetch notes:', err);
@@ -114,62 +108,58 @@ export const useNoteStore = defineStore('notes', {
         },
 
         /**
-         * 保存或更新笔记。
-         * [核心重构] 此方法现在非常通用，可以接收一个包含 id 的完整对象。
-         * 它不再关心 "编辑模式"，只负责将数据发送到后端。
-         * 创建新笔记和更新现有笔记都通过这个 action 完成。
+         * [Phase 2 新增] 获取文件树
          */
+        async fetchFileTree() {
+            try {
+                if (window.electronAPI) {
+                    const tree = await window.electronAPI.getFileTree();
+                    this.fileTree = this.sortTree(tree);
+                }
+            } catch (err) {
+                console.error('Failed to fetch file tree:', err);
+            }
+        },
+
+        /**
+         * [辅助] 对树进行排序：文件夹在前，文件名 A-Z
+         */
+        sortTree(nodes) {
+            if (!nodes) return [];
+            return nodes.map(node => ({
+                ...node,
+                children: node.children ? this.sortTree(node.children) : []
+            })).sort((a, b) => {
+                if (a.type === b.type) return a.name.localeCompare(b.name);
+                return a.type === 'folder' ? -1 : 1;
+            });
+        },
+
         async saveNote(payloadData) {
             this.isSyncing = true;
             this.error = null;
-
             try {
-                // 鲁棒性检查：确保内容不为空
-                if (!payloadData.content || !payloadData.content.trim()) {
-                    console.warn('[NoteStore] Canceled save due to empty content.');
-                    return;
-                }
+                if (!payloadData.content || !payloadData.content.trim()) return;
 
                 if (window.electronAPI) {
-                    // 使用 toRaw/JSON.parse 解包 Proxy 对象，确保纯净数据传递给后端
                     const cleanPayload = JSON.parse(JSON.stringify(payloadData));
                     const result = await window.electronAPI.saveNote(cleanPayload);
 
                     if (result.success) {
-                        // 保存成功后，刷新整个缓存以获取最新数据（包括后端生成的标题等）
                         await this.fetchNotes();
+                        await this.fetchFileTree(); // 保存新文件后刷新树
                     } else {
                         throw new Error(result.error);
                     }
-                } else {
-                    // 模拟数据逻辑
-                    const id = payloadData.id || `mock-${Date.now()}.md`;
-                    const index = this._allNotesCache.findIndex(n => n.id === id);
-                    const newNote = {
-                        id,
-                        content: payloadData.content,
-                        tags: payloadData.tags || [],
-                        title: payloadData.content.split('\n')[0].replace(/^#\s*/, '').trim(),
-                        timestamp: new Date().toISOString()
-                    };
-                    if (index > -1) {
-                        this._allNotesCache[index] = newNote;
-                    } else {
-                        this._allNotesCache.unshift(newNote);
-                    }
-                    await new Promise(r => setTimeout(r, 200));
                 }
             } catch (err) {
                 console.error('Save failed:', err);
-                this.error = '保存笔记失败';
+                this.error = 'Failed to save note';
             } finally {
                 this.isSyncing = false;
             }
         },
 
-        /**
-         * 删除笔记。确认对话框移至组件层，store 只负责执行。
-         */
         async deleteNote(id) {
             if (!id) return;
             this.isSyncing = true;
@@ -179,13 +169,15 @@ export const useNoteStore = defineStore('notes', {
                     if (!result.success) throw new Error(result.error);
                 }
 
-                // 无论后端或模拟，都直接在前端缓存中操作以立即响应
+                // 乐观 UI 更新
                 const index = this._allNotesCache.findIndex(n => n.id === id);
                 if (index > -1) this._allNotesCache.splice(index, 1);
+                if (this.selectedNoteId === id) {
+                    this.selectedNoteId = null;
+                    router.push('/'); // 如果删除了当前查看的笔记，回主页
+                }
 
-                // 如果被删除的笔记是当前选中的，则取消选中
-                if (this.selectedNoteId === id) this.selectedNoteId = null;
-
+                await this.fetchFileTree(); // 刷新树
             } catch (err) {
                 console.error('Delete failed:', err);
                 this.error = err.message;
@@ -194,42 +186,94 @@ export const useNoteStore = defineStore('notes', {
             }
         },
 
-        // --- UI 交互 Actions ---
+        // --- 文件操作 Actions ---
 
         /**
-         * 设置全局搜索查询。
-         * @param {string} query
+         * [Phase 2 新增] 在指定文件夹下创建新笔记
          */
-        setSearchQuery(query) {
-            this.searchQuery = query;
+        async createNoteInFolder(parentPath) {
+            const defaultName = `Untitled-${Date.now()}.md`;
+            // 如果有父目录，拼接路径；否则直接用文件名
+            const id = parentPath ? `${parentPath}/${defaultName}` : defaultName;
+
+            // 构造一个空的笔记对象
+            const newNote = {
+                id: id,
+                content: '# New Note\nStart writing...',
+                tags: []
+            };
+
+            await this.saveNote(newNote);
+
+            // 导航到新笔记
+            router.push({ name: 'note-view', params: { noteId: id } });
         },
 
         /**
-         * 设置当前选中的笔记 ID。
-         * @param {string} id
+         * [Phase 2 新增] 创建文件夹
          */
-        selectNote(id) {
-            this.selectedNoteId = id;
+        async createFolder(path) {
+            if (window.electronAPI) {
+                const res = await window.electronAPI.createFolder(path);
+                if (res.success) {
+                    await this.fetchFileTree();
+                } else {
+                    alert('Failed to create folder: ' + res.error);
+                }
+            }
         },
 
         /**
-         * 取消笔记的选中状态。
+         * [Phase 2 新增] 重命名
          */
-        deselectNote() {
-            this.selectedNoteId = null;
+        async renamePath(oldPath, newPath) {
+            if (window.electronAPI) {
+                const res = await window.electronAPI.renamePath(oldPath, newPath);
+                if (res.success) {
+                    // 如果重命名的是当前打开的笔记，需要更新路由
+                    if (this.selectedNoteId === oldPath) {
+                        this.selectedNoteId = newPath;
+                        router.replace({ name: 'note-view', params: { noteId: newPath } });
+                    }
+                    await this.fetchNotes();
+                    await this.fetchFileTree();
+                } else {
+                    alert('Rename failed: ' + res.error);
+                }
+            }
         },
 
         /**
-         * 请求滚动到指定笔记。
-         * @param {string} noteId
+         * [Phase 2 新增] 移动文件
          */
+        async movePath(sourceId, targetDir) {
+            if (window.electronAPI) {
+                const res = await window.electronAPI.movePath(sourceId, targetDir);
+                if (res.success) {
+                    await this.fetchNotes();
+                    await this.fetchFileTree();
+
+                    // 计算新 ID 并在需要时跳转
+                    const fileName = sourceId.split('/').pop();
+                    const newId = targetDir ? `${targetDir}/${fileName}` : fileName;
+
+                    if (this.selectedNoteId === sourceId) {
+                        router.replace({ name: 'note-view', params: { noteId: newId } });
+                    }
+                } else {
+                    alert('Move failed: ' + res.error);
+                }
+            }
+        },
+
+        setSearchQuery(query) { this.searchQuery = query; },
+        selectNote(id) { this.selectedNoteId = id; },
+        deselectNote() { this.selectedNoteId = null; },
         scrollToNote(noteId) {
             if (this._allNotesCache.some(n => n.id === noteId)) {
                 if (this.searchQuery) this.setSearchQuery('');
                 this.scrollToNoteId = noteId;
                 this.selectedNoteId = noteId;
-            } else {
-                console.warn(`[NoteStore] 无法跳转：未找到 ID 为 ${noteId} 的笔记。`);
             }
         }
     }

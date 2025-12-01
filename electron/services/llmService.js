@@ -1,133 +1,133 @@
 // electron/services/llmService.js
 
 // --- 核心修复：引入 Node.js 内置的 path 模块 ---
-// 这个模块是处理文件路径所必需的，例如用于从完整路径中提取文件名。
 const path = require('path');
 
 // =======================================================================
 // 单例模式状态管理
-// 这些变量用于在整个应用的生命周期内维护唯一的 LlamaCpp 实例和模型对象。
 // =======================================================================
 
-// 全局 LlamaCpp 引擎实例。延迟初始化，只在首次需要时加载。
 let llama = null;
-// 当前加载的聊天模型对象。
 let model = null;
-// 记录当前加载模型的路径，用于避免重复加载。
 let currentModelPath = '';
 
 /**
  * [内部辅助函数] 动态导入并初始化全局 LlamaCpp 实例。
- * 这是处理 ES Module (ESM) 依赖的关键，因为它允许在 CommonJS 环境中异步加载 ESM 库。
- *
- * @private
- * @returns {Promise<void>}
- * @throws {Error} 如果 LlamaCpp 核心引擎初始化失败。
  */
 async function _initializeLlama() {
-    // 如果实例已存在，则直接返回，实现单例模式。
     if (llama) {
         return;
     }
     try {
-        console.log('[LLM Service] 正在动态导入并初始化 LlamaCpp 核心引擎...');
-        // 使用动态 import() 语法来加载 'node-llama-cpp' 这个 ES Module。
+        console.log('[LLM Service] Importing and initializing LlamaCpp core...');
         const { getLlama } = await import('node-llama-cpp');
-        // getLlama() 是一个异步函数，它会下载或定位必要的二进制文件并准备好引擎。
         llama = await getLlama();
-        console.log('[LLM Service] LlamaCpp 核心引擎初始化成功。');
+        console.log('[LLM Service] LlamaCpp core initialized.');
     } catch (error) {
-        console.error('[LLM Service] LlamaCpp 核心引擎初始化失败:', error);
-        // 向上抛出一个更友好的错误信息。
-        throw new Error('无法初始化核心 AI 引擎 (node-llama-cpp)。');
+        console.error('[LLM Service] Failed to initialize LlamaCpp:', error);
+        throw new Error('Failed to initialize AI engine (node-llama-cpp).');
     }
 }
 
 /**
  * 加载指定的 GGUF 格式聊天模型。
- * 如果模型已加载，此函数会先释放旧模型再加载新模型。
- *
- * @param {string} modelPath - 模型文件的绝对路径。
- * @returns {Promise<boolean>} 如果加载成功则返回 true，否则返回 false。
  */
 async function loadModel(modelPath) {
-    // --- 输入验证 ---
     if (!modelPath || typeof modelPath !== 'string') {
-        console.error('[LLM Service] 加载模型失败：提供了无效的模型路径。');
+        console.error('[LLM Service] Load failed: Invalid model path.');
         return false;
     }
 
-    // --- 避免重复加载 ---
     if (model && currentModelPath === modelPath) {
-        console.log('[LLM Service] 聊天模型已是当前加载的模型，无需重复操作。');
+        console.log('[LLM Service] Model already loaded.');
         return true;
     }
 
     try {
-        // --- 确保 LlamaCpp 引擎已初始化 ---
         await _initializeLlama();
 
-        // --- 释放旧模型 ---
         if (model) {
-            console.log(`[LLM Service] 检测到模型更换，正在释放旧模型: ${path.basename(currentModelPath)}`);
+            console.log(`[LLM Service] Disposing old model: ${path.basename(currentModelPath)}`);
             await model.dispose();
-            model = null; // 清理引用
+            model = null;
             currentModelPath = '';
         }
 
-        // --- 加载新模型 ---
-        console.log(`[LLM Service] 开始加载聊天模型: ${path.basename(modelPath)}`);
+        console.log(`[LLM Service] Loading model: ${path.basename(modelPath)}`);
         model = await llama.loadModel({ modelPath });
-        currentModelPath = modelPath; // 更新当前模型路径
-        console.log('[LLM Service] 聊天模型加载成功。');
+        currentModelPath = modelPath;
+        console.log('[LLM Service] Model loaded successfully.');
         return true;
     } catch (error) {
-        console.error(`[LLM Service] 加载聊天模型 '${path.basename(modelPath)}' 失败:`, error);
-        // 在失败时重置状态，确保系统处于干净的状态。
+        console.error(`[LLM Service] Failed to load model '${path.basename(modelPath)}':`, error);
         model = null;
         currentModelPath = '';
-        // 将原始错误向上抛出，以便上层调用者（如 initializeAIServices）可以捕获并更新状态。
         throw error;
     }
 }
 
 /**
- * 启动一个流式的聊天会话，并将生成的 token 实时发送到渲染进程。
+ * [新增] 生成一次性文本补全 (非流式)。
+ * 用于生成 Tags、总结标题等无需打字机效果的后台任务。
  *
- * @param {import('electron').BrowserWindow} win - 目标浏览器窗口，用于发送 IPC 消息。
- * @param {string} userPrompt - 用户输入的原始提问。
- * @param {string|null} contextContent - (可选) 从当前笔记中提取的上下文内容。
+ * @param {string} prompt - 完整的提示词。
+ * @returns {Promise<string>} - 模型生成的完整文本。
  */
-async function startChatStream(win, userPrompt, contextContent) {
-    // --- 前置条件检查 ---
+async function generateCompletion(prompt) {
     if (!model) {
-        const errorMsg = '聊天模型尚未加载。请前往“设置”页面下载所需模型，然后重启应用。';
-        console.error(`[LLM Service] 启动聊天失败: ${errorMsg}`);
-        // 通过 IPC 将错误信息发送给前端 UI。
-        win.webContents.send('llm-stream-error', errorMsg);
-        win.webContents.send('llm-stream-end'); // 确保结束信号被发送，以便 UI 停止等待。
-        return;
+        throw new Error('Model not loaded');
     }
 
-    let sessionContext = null; // 用于持有 LlamaContext 引用，确保能被 finally 块访问
-
+    let sessionContext = null;
     try {
-        // --- 动态导入会话模块 ---
-        // 同样使用动态 import() 来获取 LlamaChatSession 类。
         const { LlamaChatSession } = await import('node-llama-cpp');
-
-        // --- 创建会话上下文 ---
-        // 这是与模型进行交互的底层对象。
         sessionContext = await model.createContext();
         const session = new LlamaChatSession({
             contextSequence: sessionContext.getSequence()
         });
 
-        // --- 构建最终的 Prompt ---
-        // 根据是否存在上下文，动态构建发送给模型的完整 prompt。
+        console.log('[LLM Service] Generating completion...');
+        // promptWithMeta 也可以，但在 LlamaChatSession 中直接用 prompt 比较方便
+        // 我们不使用 onTextChunk，而是等待 Promise 解析返回完整文本
+        const result = await session.prompt(prompt, {
+            maxTokens: 200, // 限制 token 数，生成 Tag 不需要太长
+            temperature: 0.3 // 较低的温度，让结果更确定、更相关
+        });
+
+        return result;
+    } catch (error) {
+        console.error('[LLM Service] Completion failed:', error);
+        throw error;
+    } finally {
+        if (sessionContext) {
+            await sessionContext.dispose();
+        }
+    }
+}
+
+/**
+ * 启动一个流式的聊天会话。
+ */
+async function startChatStream(win, userPrompt, contextContent) {
+    if (!model) {
+        const errorMsg = 'Chat model not loaded. Please download it in Settings.';
+        console.error(`[LLM Service] Chat failed: ${errorMsg}`);
+        win.webContents.send('llm-stream-error', errorMsg);
+        win.webContents.send('llm-stream-end');
+        return;
+    }
+
+    let sessionContext = null;
+
+    try {
+        const { LlamaChatSession } = await import('node-llama-cpp');
+        sessionContext = await model.createContext();
+        const session = new LlamaChatSession({
+            contextSequence: sessionContext.getSequence()
+        });
+
         let finalPrompt;
         if (contextContent && contextContent.trim()) {
-            // 如果有上下文，则使用模板将其包裹起来。
             finalPrompt = `You are an AI assistant named Solver. Below is some context from a user's note. Use this context to answer the user's question. If the question is unrelated to the context, answer it normally.
 
 --- CONTEXT ---
@@ -136,17 +136,13 @@ ${contextContent}
 
 USER QUESTION: ${userPrompt}`.trim();
         } else {
-            // 如果没有上下文，直接使用用户的问题。
             finalPrompt = userPrompt;
         }
 
-        console.log(`[LLM Service] 开始聊天流。Prompt (前100字符): "${finalPrompt.substring(0, 100)}..."`);
+        console.log(`[LLM Service] Starting chat stream...`);
 
-        // --- 执行流式推理 ---
         await session.prompt(finalPrompt, {
-            // `onTextChunk` 是一个回调函数，每当模型生成一个新的文本片段（token）时，它就会被调用。
             onTextChunk: (token) => {
-                // 通过 IPC 将 token 实时发送到前端。
                 if (win && !win.isDestroyed()) {
                     win.webContents.send('llm-token-stream', token);
                 }
@@ -154,27 +150,24 @@ USER QUESTION: ${userPrompt}`.trim();
         });
 
     } catch (error) {
-        console.error('[LLM Service] 聊天推理过程中发生严重错误:', error);
-        // 将详细的错误信息发送给前端。
+        console.error('[LLM Service] Chat error:', error);
         if (win && !win.isDestroyed()) {
-            win.webContents.send('llm-stream-error', `AI 推理失败: ${error.message}`);
+            win.webContents.send('llm-stream-error', `AI Error: ${error.message}`);
         }
     } finally {
-        // --- 资源清理 ---
-        // 无论成功还是失败，都必须确保释放 LlamaContext，防止内存泄漏。
         if (sessionContext) {
             await sessionContext.dispose();
         }
-        // 发送流结束信号，通知前端停止显示加载状态。
         if (win && !win.isDestroyed()) {
             win.webContents.send('llm-stream-end');
         }
-        console.log('[LLM Service] 聊天流处理结束，资源已清理。');
+        console.log('[LLM Service] Chat stream ended.');
     }
 }
 
 // 导出公共接口
 module.exports = {
     loadModel,
-    startChatStream
+    startChatStream,
+    generateCompletion // [新增]
 };

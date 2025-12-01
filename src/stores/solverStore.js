@@ -1,11 +1,8 @@
 import { defineStore } from 'pinia'
-// [核心修复] 移除 useRoute，因为它不能在 store action 中使用
-// import { useRoute } from 'vue-router'
 import { useNoteStore } from './noteStore'
 
 /**
  * [日志] 内部辅助函数，用于生成一个简单的唯一追踪ID。
- * @returns {string} 格式为 'trace-<timestamp>-<random>' 的字符串。
  */
 function generateTraceId() {
     return `trace-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -16,7 +13,7 @@ export const useSolverStore = defineStore('solver', {
         mode: 'chat',
         isThinking: false,
         chatHistory: [
-            { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。在主页输入时我会分析你的草稿，在笔记页面我会分析当前笔记。' }
+            { role: 'ai', text: 'Hello, I am Solver, your AI knowledge assistant. I can analyze your drafts on the home page or analyze the current note when viewing one.' }
         ],
         relatedContexts: [],
         streamingText: '',
@@ -58,9 +55,10 @@ export const useSolverStore = defineStore('solver', {
             this._listeners = [];
         },
 
+        // --- 上下文分析 ---
         async analyzeContext(noteId) {
             const traceId = generateTraceId();
-            console.log(`[SolverStore][${traceId}] 基于笔记的智能关联启动...`, { noteId });
+            console.log(`[SolverStore][${traceId}] Starting Note-based Context Analysis...`, { noteId });
 
             if (!noteId) {
                 this.mode = 'chat';
@@ -97,8 +95,8 @@ export const useSolverStore = defineStore('solver', {
                     this.relatedContexts = results;
                 }
             } catch (err) {
-                console.error(`[SolverStore][${traceId}] 智能关联搜索失败:`, err);
-                this.error = '智能关联分析失败，请检查后台日志。';
+                console.error(`[SolverStore][${traceId}] Context Search Failed:`, err);
+                this.error = 'Context analysis failed. Please check logs.';
             } finally {
                 this.isThinking = false;
             }
@@ -112,7 +110,7 @@ export const useSolverStore = defineStore('solver', {
                 return;
             }
 
-            console.log(`[SolverStore][${traceId}] 基于草稿的智能关联启动...`);
+            console.log(`[SolverStore][${traceId}] Starting Draft-based Context Analysis...`);
             this.mode = 'context';
             this.isThinking = true;
             this.relatedContexts = [];
@@ -128,41 +126,93 @@ export const useSolverStore = defineStore('solver', {
                     this.relatedContexts = results;
                 }
             } catch (err) {
-                console.error(`[SolverStore][${traceId}] 草稿关联搜索失败:`, err);
-                this.error = '草稿分析失败，请检查后台日志。';
+                console.error(`[SolverStore][${traceId}] Draft Search Failed:`, err);
+                this.error = 'Draft analysis failed. Please check logs.';
             } finally {
                 this.isThinking = false;
             }
         },
 
-        /**
-         * [核心修复] sendMessage action 变得更通用。
-         * 它现在接收一个可选的 contextContent 参数，不再关心路由。
-         * 决定提供哪个上下文的逻辑被移到了调用它的组件 (SolverSidebar.vue) 中。
-         *
-         * @param {string} text - 用户输入的消息文本。
-         * @param {string | null} contextContent - (可选) 由组件提供的上下文内容。
-         */
+        // --- 聊天功能 ---
         async sendMessage(text, contextContent = null) {
             if (!text.trim() || this.isThinking || !window.electronAPI) return;
 
             this.error = null;
             this.chatHistory.push({ role: 'user', text });
 
-            // 1. 决定最终要发送的上下文
-            // 如果用户开启了上下文关联，并且调用者提供了上下文内容，则使用它。
             const finalContext = this.isContextToggleOn ? contextContent : null;
 
-            // 2. 发送请求
             this.streamingText = '';
             this.isThinking = true;
             try {
-                console.log(`[SolverStore] 发送聊天请求，上下文长度: ${finalContext?.length || 0}`);
+                console.log(`[SolverStore] Sending chat request, context length: ${finalContext?.length || 0}`);
                 await window.electronAPI.startChat(text, finalContext);
             } catch (err) {
-                console.error('无法开始聊天流:', err);
-                this.error = `无法开始对话: ${err.message}`;
+                console.error('Failed to start chat stream:', err);
+                this.error = `Unable to start chat: ${err.message}`;
                 this.isThinking = false;
+            }
+        },
+
+        // --- [新增] 生成 Tags 功能 ---
+        /**
+         * 基于内容生成 5 个推荐标签。
+         * @param {string} content - 需要分析的文本内容
+         * @returns {Promise<string[]>} - 标签数组
+         */
+        async generateTagsFromContent(content) {
+            if (!content || !content.trim()) return [];
+            if (!window.electronAPI) {
+                console.warn('[SolverStore] Electron API unavailable for tag generation.');
+                return [];
+            }
+
+            console.log('[SolverStore] Requesting tag generation...');
+
+            // 构造强约束的 Prompt，要求输出 JSON
+            const prompt = `
+Task: Extract top 5 relevant tags from the text below.
+Rules:
+1. Output strictly a JSON array of strings.
+2. No explanations, no extra text.
+3. Sort by relevance (highest first).
+4. Example output: ["keyword1", "keyword2", "keyword3"]
+
+Text to analyze:
+${content.substring(0, 1000)}
+
+Tags (JSON array):`.trim();
+
+            try {
+                const response = await window.electronAPI.generateTags(prompt);
+
+                if (response.success && response.text) {
+                    let rawText = response.text.trim();
+                    console.log('[SolverStore] Raw tag response:', rawText);
+
+                    // 清理可能存在的 Markdown 代码块标记 (例如 ```json ... ```)
+                    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+                    // 尝试找到 JSON 数组部分 (以 [ 开头，以 ] 结尾)
+                    const jsonMatch = rawText.match(/\[.*\]/s);
+                    if (jsonMatch) {
+                        rawText = jsonMatch[0];
+                    }
+
+                    const tags = JSON.parse(rawText);
+                    if (Array.isArray(tags)) {
+                        // 过滤非字符串项，取前5个，转换为小写
+                        return tags
+                            .filter(t => typeof t === 'string')
+                            .map(t => t.toLowerCase().trim())
+                            .slice(0, 5);
+                    }
+                }
+                throw new Error('Invalid model response format');
+            } catch (error) {
+                console.error('[SolverStore] Tag generation failed:', error);
+                // 不向用户显示错误，静默失败，避免打扰编辑器流程
+                return [];
             }
         },
 

@@ -3,16 +3,30 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    // --- 笔记操作 API ---
+    // --- 笔记与文件系统 API ---
     loadNotes: () => ipcRenderer.invoke('notes:load'),
     saveNote: (noteData) => ipcRenderer.invoke('notes:save', noteData),
-    // [核心修改] 移除 searchNotes API
-    // 由于搜索功能已完全迁移到前端 Pinia store 中处理，
-    // 不再需要通过 IPC 调用后端进行搜索。
-    // searchNotes: (query) => ipcRenderer.invoke('notes:search', query),
     deleteNote: (id) => ipcRenderer.invoke('notes:delete', id),
 
-    // --- 模型管理 API ---
+    // [Phase 2 新增]
+    getFileTree: () => ipcRenderer.invoke('fs:get-tree'), // 需在 main.js 注册
+    createFolder: (path) => ipcRenderer.invoke('fs:create-folder', path),
+    renamePath: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', oldPath, newPath),
+    movePath: (sourcePath, targetDir) => ipcRenderer.invoke('fs:move', sourcePath, targetDir),
+
+    onNotesUpdated: (callback) => {
+        const handler = () => callback();
+        ipcRenderer.on('notes:updated', handler);
+        return () => ipcRenderer.removeListener('notes:updated', handler);
+    },
+
+    // --- 设置 API ---
+    getSettings: () => ipcRenderer.invoke('settings:get'),
+    setSetting: (key, value) => ipcRenderer.invoke('settings:set', key, value),
+    selectFolder: () => ipcRenderer.invoke('settings:select-folder'),
+    openPath: (path) => ipcRenderer.invoke('shell:open-path', path),
+
+    // --- AI 与模型 API ---
     listLocalModels: () => ipcRenderer.invoke('models:list'),
     downloadModel: (url, fileName) => ipcRenderer.invoke('models:download', { url, fileName }),
     getModelsDir: () => ipcRenderer.invoke('models:get-dir'),
@@ -23,7 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     getModelsStatus: () => ipcRenderer.invoke('models:get-status'),
 
-    // --- LLM 聊天 API ---
+    // --- LLM 功能 ---
     startChat: (prompt, contextContent) => ipcRenderer.invoke('llm:start-chat', prompt, contextContent),
     onLLMToken: (callback) => {
         const handler = (event, token) => callback(token);
@@ -40,23 +54,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('llm-stream-error', handler);
         return () => ipcRenderer.removeListener('llm-stream-error', handler);
     },
+    generateTags: (prompt) => ipcRenderer.invoke('llm:generate-tags', prompt),
 
-    // --- 向量搜索 API ---
+    // --- 向量搜索 ---
     semanticSearch: ({ queryText, traceId, excludeId }) =>
         ipcRenderer.invoke('vectors:search', { queryText, traceId, excludeId }),
 
-    // --- [核心修改] 主题 API ---
+    // --- 主题 ---
     getSystemTheme: () => ipcRenderer.invoke('theme:get-system'),
     onThemeUpdate: (callback) => {
         const handler = (event, theme) => callback(theme);
         ipcRenderer.on('theme:updated', handler);
         return () => ipcRenderer.removeListener('theme:updated', handler);
     },
-
-    /**
-     * [新增] 向主进程发送设置原生主题的请求。
-     * 这是一个单向通信 (send)，因为它不需要主进程的直接响应。
-     * @param {'light' | 'dark' | 'system'} theme - 要应用的主题设置。
-     */
     setNativeTheme: (theme) => ipcRenderer.send('theme:set', theme)
 });
