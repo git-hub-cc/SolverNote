@@ -1,12 +1,22 @@
 <template>
   <aside class="nav-rail">
-    <!-- Header -->
+    <!-- 1. 头部区域 -->
     <div class="nav-header">
       <BrainIcon class="icon brand-icon" />
       <span class="brand-text">SolverNote</span>
     </div>
 
-    <!-- Main Menu -->
+    <!-- 2. 系统菜单 (调整至顶部) -->
+    <div class="nav-group-title">System</div>
+    <nav class="nav-menu">
+      <router-link to="/settings" class="nav-item">
+        <SettingsIcon class="icon" />
+        <span>Settings</span>
+      </router-link>
+    </nav>
+
+    <!-- 3. 主导航菜单 -->
+    <div class="nav-group-title">Workspace</div>
     <nav class="nav-menu">
       <a
           href="#"
@@ -37,14 +47,9 @@
       </router-link>
     </nav>
 
-    <!-- System Menu -->
-    <div class="nav-group-title">System</div>
-    <nav class="nav-menu">
-      <router-link to="/settings" class="nav-item">
-        <SettingsIcon class="icon" />
-        <span>Settings</span>
-      </router-link>
-    </nav>
+    <!-- 4. [新增] 文件目录树 -->
+    <FileTreeView class="file-tree-section" />
+
   </aside>
 </template>
 
@@ -52,7 +57,15 @@
 import { ref, watch, computed } from 'vue'
 import { useNoteStore } from '@/stores/noteStore'
 import { useRouter, useRoute } from 'vue-router'
-import { Brain as BrainIcon, Calendar as CalendarIcon, Search as SearchIcon, Hash as HashIcon, Settings as SettingsIcon } from 'lucide-vue-next'
+// 核心修改: 引入新建的文件树组件
+import FileTreeView from './FileTreeView.vue'
+import {
+  Brain as BrainIcon,
+  Calendar as CalendarIcon,
+  Search as SearchIcon,
+  Hash as HashIcon,
+  Settings as SettingsIcon
+} from 'lucide-vue-next'
 
 const noteStore = useNoteStore()
 const searchQuery = ref('')
@@ -62,9 +75,10 @@ let debounceTimer = null
 const router = useRouter()
 const route = useRoute()
 
+// 检查当前是否在主页 (Today)
 const isHomeActive = computed(() => route.path === '/')
 
-// 监听输入并防抖触发 Store 搜索
+// 监听搜索框输入，防抖后更新 store
 watch(searchQuery, (newVal) => {
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
@@ -72,13 +86,16 @@ watch(searchQuery, (newVal) => {
   }, 300)
 })
 
+// 清空搜索框内容
 const clearSearch = () => {
   searchQuery.value = ''
 }
 
 // "Today" 链接的点击事件处理器
+// 点击后清空搜索条件并跳转到主页
 const handleGoHome = () => {
   noteStore.setSearchQuery('')
+  searchQuery.value = '' // 同时清空本地输入框
   router.push('/')
 }
 </script>
@@ -88,8 +105,13 @@ const handleGoHome = () => {
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  /* 导航栏使用独立的背景色，确保在深色模式下能与主区域区分 */
   background-color: var(--bg-sidebar);
+  // 新增: 让侧边栏内容超出时可以滚动
+  overflow-y: auto;
+  // 新增: 隐藏默认滚动条，但保留功能
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .nav-header {
@@ -100,6 +122,7 @@ const handleGoHome = () => {
   gap: 8px;
   font-weight: 600;
   color: var(--text-primary);
+  flex-shrink: 0; // 防止头部被压缩
 
   .brand-icon {
     color: var(--color-brand);
@@ -110,6 +133,7 @@ const handleGoHome = () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0; // 防止菜单被压缩
 }
 
 .nav-item {
@@ -123,6 +147,7 @@ const handleGoHome = () => {
   font-weight: 500;
   transition: all 0.2s;
   cursor: pointer;
+  user-select: none;
 
   &:hover {
     background-color: var(--bg-hover);
@@ -143,6 +168,11 @@ const handleGoHome = () => {
   padding: 0 12px;
   margin-top: 24px;
   margin-bottom: 8px;
+
+  // 第一个标题不需要上边距
+  &:first-of-type {
+    margin-top: 0;
+  }
 }
 
 /* 搜索框样式 */
@@ -157,10 +187,8 @@ const handleGoHome = () => {
   transition: all 0.2s;
 
   &.focused {
-    /* [核心修改 1/2] 使用 var(--bg-card) 替代 #fff，以适配深色模式 */
     background: var(--bg-card);
     border-color: var(--color-brand);
-    /* [核心修改 2/2] 使用 var(--bg-active) 作为光晕颜色，确保在两种主题下都可见且不突兀 */
     box-shadow: 0 0 0 2px var(--bg-active);
   }
 
@@ -184,5 +212,14 @@ const handleGoHome = () => {
     color: var(--text-tertiary);
     &:hover { color: var(--text-secondary); }
   }
+}
+
+// [新增] 文件树区域的样式
+.file-tree-section {
+  // 让文件树填满剩余空间
+  flex: 1;
+  min-height: 0; // flex 布局中允许内容滚动的关键
+  display: flex;
+  flex-direction: column;
 }
 </style>

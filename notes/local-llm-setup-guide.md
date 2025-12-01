@@ -1,11 +1,11 @@
 ---
-title: 本地LLM环境搭建实用指南
-date: '2024-05-15T11:30:00.000Z'
+date: '2025-11-30T18:03:29.028Z'
 tags:
   - AI
   - LLM
   - Guide
   - Ollama
+title: 本地LLM环境搭建实用指南
 ---
 
 # 本地LLM环境搭建实用指南

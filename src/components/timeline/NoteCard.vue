@@ -2,12 +2,12 @@
   <article
       class="note-card"
       :class="{ 'is-selected': isSelected }"
-      @click.stop="$emit('select', note.id)"
+      @click="navigateToNote"
   >
     <!--
-      注意上面的 @click.stop：
-      这阻止了点击事件冒泡到外层的 StreamTimeline 容器。
-      如果不加 .stop，点击卡片会同时触发容器的背景点击事件，导致选中后立即被取消。
+      [核心修改] 卡片的点击事件 `@click` 现在调用 `navigateToNote` 方法，
+      该方法将使用 Vue Router 进行页面跳转，而不是仅仅在当前页面更新状态。
+      这使得时间线视图成为一个导航中心。
     -->
 
     <!-- Meta Info -->
@@ -20,12 +20,16 @@
         </div>
       </div>
 
-      <!-- 操作按钮 (阻止冒泡，避免误触选中逻辑) -->
+      <!--
+        操作按钮的点击事件通过 `@click.stop` 阻止了事件冒泡。
+        这非常重要，因为它能防止点击“编辑”或“删除”按钮时，
+        意外触发父元素 `article` 的 `navigateToNote` 跳转事件。
+      -->
       <div class="actions-group" @click.stop>
-        <button class="action-btn" @click="$emit('edit', note)" title="Edit">
+        <button class="action-btn" @click="$emit('edit', note)" title="在时间线中编辑">
           <Edit2Icon class="icon-xs" />
         </button>
-        <button class="action-btn danger" @click="$emit('delete', note.id)" title="Delete">
+        <button class="action-btn danger" @click="$emit('delete', note.id)" title="删除">
           <Trash2Icon class="icon-xs" />
         </button>
       </div>
@@ -38,10 +42,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import dayjs from 'dayjs'
-import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next'
-import { renderMarkdown } from '@/utils/markdownRenderer'
+import { computed } from 'vue';
+import { useRouter } from 'vue-router'; // [核心修改] 引入 useRouter
+import dayjs from 'dayjs';
+import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next';
+import { renderMarkdown } from '@/utils/markdownRenderer';
 
 const props = defineProps({
   note: {
@@ -49,17 +54,32 @@ const props = defineProps({
     required: true
   },
   isSelected: Boolean
-})
+});
 
-defineEmits(['select', 'edit', 'delete'])
+defineEmits(['edit', 'delete']);
+
+const router = useRouter(); // [核心修改] 实例化 router
 
 const formattedTime = computed(() => {
-  return dayjs(props.note.timestamp).format('MMM D, HH:mm')
-})
+  return dayjs(props.note.timestamp).format('MMM D, HH:mm');
+});
 
 const renderedContent = computed(() => {
-  return renderMarkdown(props.note.content || '')
-})
+  return renderMarkdown(props.note.content || '');
+});
+
+/**
+ * [核心修改] 新增的导航方法
+ * 当用户点击卡片时，此方法被调用。
+ */
+const navigateToNote = () => {
+  // 使用 router.push 进行程序化导航
+  router.push({
+    name: 'note-view', // 导航到我们定义好的命名路由
+    params: { noteId: props.note.id } // 将当前卡片的笔记ID作为参数传递
+  });
+};
+
 </script>
 
 <style lang="scss" scoped>
@@ -70,15 +90,18 @@ const renderedContent = computed(() => {
   padding: 16px 20px;
   margin-bottom: 16px;
   transition: all 0.2s;
-  cursor: default;
+  cursor: pointer; /* [核心修改] 将光标改为 pointer，提示用户这是一个可点击的链接 */
 
   &:hover {
     border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card);
     .actions-group {
       opacity: 1;
     }
   }
 
+  /* is-selected 样式现在主要用于视觉反馈，表示“这是当前URL对应的笔记” */
   &.is-selected {
     border-color: var(--color-brand);
     box-shadow: 0 0 0 1px var(--color-brand-light);
@@ -116,7 +139,7 @@ const renderedContent = computed(() => {
   color: var(--text-tertiary);
   cursor: pointer;
   &:hover { background: var(--bg-hover); color: var(--text-primary); }
-  &.danger:hover { background: #FEF2F2; color: var(--color-danger); }
+  &.danger:hover { background: var(--color-danger-bg); color: var(--color-danger-text); }
 }
 
 .icon-xs { width: 14px; height: 14px; }
@@ -129,7 +152,6 @@ const renderedContent = computed(() => {
   p:last-child { margin-bottom: 0; }
   ul, ol { padding-left: 1.5em; margin-bottom: 0.75em; }
   code { background: var(--color-code-bg); padding: 2px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.9em; }
-  /* Wiki Link Style */
   .wiki-link { color: var(--color-brand); font-weight: 500; cursor: pointer; background: var(--color-brand-light); padding: 0 4px; border-radius: 4px; }
 }
 </style>

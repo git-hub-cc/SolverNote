@@ -1,7 +1,7 @@
 // electron/main.js
 
-// [修改] 引入 nativeTheme
-const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');
+// [核心修改] 从 electron 中额外引入 Menu 模块
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu } = require('electron');
 const path = require('path');
 const chokidar = require('chokidar');
 const fs = require('fs-extra');
@@ -51,7 +51,7 @@ function getNotesDir() {
     return noteDir;
 }
 
-// --- 核心业务函数  ---
+// --- 核心业务函数 (保持不变) ---
 async function reindexAllNotes() {
     console.info('[AI] 开始对所有现有笔记进行全量重新索引...');
     try {
@@ -162,7 +162,7 @@ function createWindow() {
         }
     });
 
-    // [新增] 监听系统主题变化，并通知渲染进程
+    // 监听系统主题变化，并通知渲染进程
     nativeTheme.on('updated', () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
@@ -182,6 +182,13 @@ function createWindow() {
 app.whenReady().then(async () => {
     console.info('================ 应用启动 ================');
     console.info(`日志级别设置为: ${log.level}`);
+
+    // --- [核心修改] 隐藏菜单栏 (仅在非 macOS 平台) ---
+    // 在 Windows 和 Linux 上，隐藏菜单栏可以提供更简洁的用户界面。
+    // 在 macOS 上，菜单栏是系统级的，包含重要操作（如退出），因此予以保留以符合平台规范。
+    if (process.platform !== 'darwin') {
+        Menu.setApplicationMenu(null);
+    }
 
     // --- 注册 IPC 处理程序 ---
     ipcMain.handle('notes:load', handleLoadNotes);
@@ -207,11 +214,20 @@ app.whenReady().then(async () => {
         return vectorService.searchSimilarNotes(queryText, traceId, excludeId);
     });
 
-    // [新增] 注册获取系统主题的 IPC 处理器
+    // --- 主题相关 IPC 处理程序 ---
     ipcMain.handle('theme:get-system', () => {
         return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     });
 
+    ipcMain.on('theme:set', (event, theme) => {
+        const validThemes = new Set(['light', 'dark', 'system']);
+        if (validThemes.has(theme)) {
+            nativeTheme.themeSource = theme;
+            console.info(`[Theme] 已将原生主题设置为: ${theme}`);
+        } else {
+            console.warn(`[Theme] 收到无效的主题设置请求: ${theme}`);
+        }
+    });
 
     // 初始化服务并创建窗口
     await initializeAIServices();

@@ -26,12 +26,12 @@ import NavigationRail from '@/components/layout/NavigationRail.vue'
 import SolverSidebar from '@/components/layout/SolverSidebar.vue'
 import { useNoteStore } from '@/stores/noteStore'
 import { useSolverStore } from '@/stores/solverStore'
-import { useUIStore } from '@/stores/uiStore'
+import { useUIStore } from '@/stores/uiStore' // 引入 UI store
 import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next'
 
 const noteStore = useNoteStore()
 const solverStore = useSolverStore()
-const uiStore = useUIStore()
+const uiStore = useUIStore() // 实例化 UI store
 
 const isSidebarOpen = ref(true)
 
@@ -47,11 +47,10 @@ watch(() => noteStore.selectedNoteId, (newId) => {
   }
 })
 
+
 // --- [核心修改] 主题管理逻辑 ---
 
-// [移除] 不再需要 `updateHljsTheme` 函数，因为主题切换现在是纯 CSS 实现。
-
-// [修改] watch 回调现在变得极其简单，只负责在 <html> 标签上添加或移除 .dark 类。
+// 侦听最终生效的主题 (`effectiveTheme`)，并更新 `<html>` class 以应用 CSS 变量。
 watch(() => uiStore.effectiveTheme, (newTheme) => {
   const root = document.documentElement;
   if (newTheme === 'dark') {
@@ -59,15 +58,30 @@ watch(() => uiStore.effectiveTheme, (newTheme) => {
   } else {
     root.classList.remove('dark');
   }
-  // [移除] 不再需要在这里调用 updateHljsTheme
 }, {
-  immediate: true
+  immediate: true // 立即执行一次，确保应用加载时主题正确
 });
+
+
+/**
+ * [核心新增] 侦听用户的偏好设置 (`themePreference`)。
+ * 当用户在设置页面更改偏好时 (例如从 'system' 改为 'dark')，
+ * 这个侦听器会被触发，并将新的偏好设置发送给主进程，
+ * 以便主进程更新原生窗口（标题栏）的主题。
+ */
+watch(() => uiStore.themePreference, (newPreference) => {
+  // 检查 Electron API 是否存在，确保在浏览器环境中不会报错
+  if (window.electronAPI && window.electronAPI.setNativeTheme) {
+    window.electronAPI.setNativeTheme(newPreference);
+  }
+}, {
+  immediate: true // 立即执行一次，确保应用启动时主进程的主题与渲染进程同步
+});
+
 
 onMounted(async () => {
   solverStore.setupListeners();
 
-  // (此部分保持不变)
   // 调用 uiStore 的初始化方法，它会处理所有与 Electron 的通信
   uiStore.initializeTheme();
 })
@@ -75,7 +89,6 @@ onMounted(async () => {
 onUnmounted(() => {
   solverStore.cleanupListeners();
 
-  // (此部分保持不变)
   // 调用 uiStore 的清理方法
   uiStore.cleanup();
 })

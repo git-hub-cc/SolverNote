@@ -42,11 +42,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     semanticSearch: ({ queryText, traceId, excludeId }) =>
         ipcRenderer.invoke('vectors:search', { queryText, traceId, excludeId }),
 
-    // --- [新增] 主题 API ---
+    // --- [核心修改] 主题 API ---
     getSystemTheme: () => ipcRenderer.invoke('theme:get-system'),
     onThemeUpdate: (callback) => {
         const handler = (event, theme) => callback(theme);
         ipcRenderer.on('theme:updated', handler);
         return () => ipcRenderer.removeListener('theme:updated', handler);
-    }
+    },
+
+    /**
+     * [新增] 向主进程发送设置原生主题的请求。
+     * 这是一个单向通信 (send)，因为它不需要主进程的直接响应。
+     * @param {'light' | 'dark' | 'system'} theme - 要应用的主题设置。
+     */
+    setNativeTheme: (theme) => ipcRenderer.send('theme:set', theme)
 });
