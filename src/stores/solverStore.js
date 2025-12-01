@@ -1,11 +1,10 @@
-// src/stores/solverStore.js
-
 import { defineStore } from 'pinia'
+// [核心修复] 移除 useRoute，因为它不能在 store action 中使用
+// import { useRoute } from 'vue-router'
 import { useNoteStore } from './noteStore'
 
 /**
  * [日志] 内部辅助函数，用于生成一个简单的唯一追踪ID。
- * 在本地应用场景下，时间戳+随机数足以保证唯一性。
  * @returns {string} 格式为 'trace-<timestamp>-<random>' 的字符串。
  */
 function generateTraceId() {
@@ -14,83 +13,67 @@ function generateTraceId() {
 
 export const useSolverStore = defineStore('solver', {
     state: () => ({
-        mode: 'chat', // 当前模式: 'chat' (聊天) | 'context' (智能关联)
-        isThinking: false, // AI 是否正在处理请求
-        chatHistory: [ // 聊天历史记录
-            { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。选中一篇笔记我会自动分析，你也可以直接向我提问。' }
+        mode: 'chat',
+        isThinking: false,
+        chatHistory: [
+            { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。在主页输入时我会分析你的草稿，在笔记页面我会分析当前笔记。' }
         ],
-        relatedContexts: [], // 智能关联找到的相关笔记片段
-        streamingText: '',   // 流式响应的当前文本
-        error: null,         // 错误信息
-        _listeners: []       // 用于存储 Electron IPC 事件的取消订阅函数
+        relatedContexts: [],
+        streamingText: '',
+        error: null,
+        draftContext: '',
+        isContextToggleOn: true,
+        _listeners: []
     }),
 
     actions: {
-        // --- 监听器设置与清理 ---
-
-        /**
-         * 设置 Electron IPC 事件监听器。
-         * 用于接收来自主进程的 LLM token 流、结束信号和错误信息。
-         */
         setupListeners() {
-            this.cleanupListeners(); // 先清理旧的监听器，防止重复注册
+            this.cleanupListeners();
             if (!window.electronAPI) return;
 
-            // 监听 token 流
             const unsubscribeToken = window.electronAPI.onLLMToken((token) => {
                 this.streamingText += token;
             });
             this._listeners.push(unsubscribeToken);
 
-            // 监听流结束信号
             const unsubscribeEnd = window.electronAPI.onLLMEnd(() => {
                 if (this.streamingText) {
-                    // 将完整的流式响应存入聊天历史
                     this.chatHistory.push({ role: 'ai', text: this.streamingText });
                 }
-                this.streamingText = ''; // 清空流式文本
-                this.isThinking = false; // 重置思考状态
+                this.streamingText = '';
+                this.isThinking = false;
             });
             this._listeners.push(unsubscribeEnd);
 
-            // 监听错误信号
             const unsubscribeError = window.electronAPI.onLLMError((errorMsg) => {
                 this.error = errorMsg;
                 this.isThinking = false;
-                setTimeout(() => { this.error = null; }, 5000); // 5秒后自动清除错误
+                setTimeout(() => { this.error = null; }, 5000);
             });
             this._listeners.push(unsubscribeError);
         },
 
-        /**
-         * 清理所有已注册的 IPC 监听器，防止内存泄漏。
-         */
         cleanupListeners() {
             this._listeners.forEach(unsubscribe => unsubscribe());
             this._listeners = [];
         },
 
-        /**
-         * 分析选中的笔记，并触发智能关联搜索。
-         * @param {string} noteId - 被选中的笔记 ID。
-         */
         async analyzeContext(noteId) {
-            const traceId = generateTraceId(); // 为本次请求生成唯一ID
-            console.log(`[SolverStore][${traceId}] 智能关联分析流程启动...`, { noteId });
+            const traceId = generateTraceId();
+            console.log(`[SolverStore][${traceId}] 基于笔记的智能关联启动...`, { noteId });
 
             if (!noteId) {
-                this.mode = 'chat'; // 如果没有选中笔记，则切换回聊天模式
+                this.mode = 'chat';
                 return;
             }
 
-            // 初始化状态
             this.mode = 'context';
             this.isThinking = true;
             this.relatedContexts = [];
             this.error = null;
 
             const noteStore = useNoteStore();
-            const selectedNote = noteStore.notes.find(n => n.id === noteId);
+            const selectedNote = noteStore.getNoteById(noteId);
 
             if (!selectedNote || !window.electronAPI) {
                 this.isThinking = false;
@@ -98,15 +81,12 @@ export const useSolverStore = defineStore('solver', {
             }
 
             try {
-                // 优先使用标题作为查询文本，否则使用内容摘要
                 let queryText = selectedNote.title?.trim() || selectedNote.content?.substring(0, 200);
-
                 if (!queryText.trim()) {
                     this.isThinking = false;
                     return;
                 }
 
-                // 调用 Electron 后端进行语义搜索，并排除当前笔记自身
                 const results = await window.electronAPI.semanticSearch({
                     queryText: queryText,
                     traceId: traceId,
@@ -124,26 +104,61 @@ export const useSolverStore = defineStore('solver', {
             }
         },
 
+        async analyzeDraft(draftContent) {
+            const traceId = generateTraceId();
+            if (!draftContent || !draftContent.trim()) {
+                this.mode = 'chat';
+                this.relatedContexts = [];
+                return;
+            }
+
+            console.log(`[SolverStore][${traceId}] 基于草稿的智能关联启动...`);
+            this.mode = 'context';
+            this.isThinking = true;
+            this.relatedContexts = [];
+            this.error = null;
+
+            try {
+                const results = await window.electronAPI.semanticSearch({
+                    queryText: draftContent,
+                    traceId: traceId,
+                    excludeId: null
+                });
+                if (Array.isArray(results)) {
+                    this.relatedContexts = results;
+                }
+            } catch (err) {
+                console.error(`[SolverStore][${traceId}] 草稿关联搜索失败:`, err);
+                this.error = '草稿分析失败，请检查后台日志。';
+            } finally {
+                this.isThinking = false;
+            }
+        },
+
         /**
-         * 发送聊天消息。
+         * [核心修复] sendMessage action 变得更通用。
+         * 它现在接收一个可选的 contextContent 参数，不再关心路由。
+         * 决定提供哪个上下文的逻辑被移到了调用它的组件 (SolverSidebar.vue) 中。
+         *
          * @param {string} text - 用户输入的消息文本。
+         * @param {string | null} contextContent - (可选) 由组件提供的上下文内容。
          */
-        async sendMessage(text) {
+        async sendMessage(text, contextContent = null) {
             if (!text.trim() || this.isThinking || !window.electronAPI) return;
 
             this.error = null;
-            this.chatHistory.push({ role: 'user', text }); // 将用户消息添加到历史记录
+            this.chatHistory.push({ role: 'user', text });
 
-            // 如果当前选中了笔记，则将其内容作为上下文
-            const noteStore = useNoteStore();
-            const contextContent = noteStore.activeNote ? noteStore.activeNote.content : null;
+            // 1. 决定最终要发送的上下文
+            // 如果用户开启了上下文关联，并且调用者提供了上下文内容，则使用它。
+            const finalContext = this.isContextToggleOn ? contextContent : null;
 
+            // 2. 发送请求
             this.streamingText = '';
             this.isThinking = true;
-
             try {
-                // 调用 Electron 后端开始聊天
-                await window.electronAPI.startChat(text, contextContent);
+                console.log(`[SolverStore] 发送聊天请求，上下文长度: ${finalContext?.length || 0}`);
+                await window.electronAPI.startChat(text, finalContext);
             } catch (err) {
                 console.error('无法开始聊天流:', err);
                 this.error = `无法开始对话: ${err.message}`;
@@ -151,10 +166,22 @@ export const useSolverStore = defineStore('solver', {
             }
         },
 
-        /**
-         * [新增] 切换到聊天模式。
-         * 用于在“智能关联”视图中，通过点击按钮明确地返回聊天界面。
-         */
+        setDraftContext(content) {
+            this.draftContext = content;
+        },
+
+        clearDraftContext() {
+            this.draftContext = '';
+            if (this.mode === 'context') {
+                this.mode = 'chat';
+                this.relatedContexts = [];
+            }
+        },
+
+        toggleContextInclusion() {
+            this.isContextToggleOn = !this.isContextToggleOn;
+        },
+
         switchToChatMode() {
             this.mode = 'chat';
         }

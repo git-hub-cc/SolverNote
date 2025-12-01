@@ -39,7 +39,6 @@ const md = new MarkdownIt({
 });
 
 
-// (原有逻辑保持不变)
 // 自定义渲染规则 (可选)
 // 例如：处理 [[WikiLinks]] (暂时简单的视觉处理，未来可加跳转逻辑)
 const defaultText = md.renderer.rules.text || function(tokens, idx, options, env, self) {
@@ -67,7 +66,7 @@ md.core.ruler.push('wiki_links', (state) => {
 export function renderMarkdown(text) {
     if (!text) return '';
 
-    // (原有逻辑保持不变)
+
     const preProcessed = text.replace(
         /\[\[(.*?)\]\]/g,
         '<span class="wiki-link">[[ $1 ]]</span>'

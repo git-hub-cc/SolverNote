@@ -3,7 +3,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 // [核心修改] 引入新建的 SingleNoteView 视图组件
 const SingleNoteView = () => import('@/views/SingleNoteView.vue')
 
-// 其他组件懒加载保持不变
+// 其他组件懒加载
 const StreamTimeline = () => import('@/components/timeline/StreamTimeline.vue')
 const TagsView = () => import('@/views/TagsView.vue')
 const SettingsView = () => import('@/views/SettingsView.vue')

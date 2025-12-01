@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-// 模拟数据 (浏览器环境开发时的回退方案)
+// 模拟数据 (在浏览器环境开发时，作为回退方案)
 const MOCK_NOTES = [
     {
         id: 'mock-1.md',
@@ -23,29 +23,24 @@ export const useNoteStore = defineStore('notes', {
         /**
          * 内部笔记缓存。
          * 这是所有笔记的唯一真实来源 (Single Source of Truth)，直接从后端加载。
-         * 它不应该被搜索等前端过滤操作直接修改，从而避免状态污染。
          * @type {Array<Object>}
          */
         _allNotesCache: [],
 
-        // --- 其他状态 ---
+        // --- 核心状态 ---
         loading: false,       // 是否正在从后端加载数据
         error: null,          // 错误信息
         searchQuery: '',      // 当前的搜索关键词
-        selectedNoteId: null, // 当前选中的笔记ID
-
-        // `editingNote` 主要用于主时间线上的快速编辑功能。
-        // 单文件视图的编辑状态由其组件内部管理。
-        editingNote: null,
-
         isSyncing: false,     // 是否正在与后端同步（保存/删除）
+
+        // --- UI 交互状态 ---
+        selectedNoteId: null, // 当前在 UI 上高亮的笔记ID (可以是时间线或单页视图)
         scrollToNoteId: null  // 用于触发滚动到指定笔记的状态
     }),
 
     getters: {
         /**
-         * [核心新增] 根据 ID 高效查找笔记的 Getter。
-         * 这是一个函数式 Getter，允许传递参数，使得在组件中查找特定笔记变得非常方便。
+         * 根据 ID 高效查找笔记的 Getter。
          * @returns {(id: string) => Object | undefined} 一个接受笔记 ID 并返回笔记对象的函数。
          */
         getNoteById: (state) => {
@@ -63,15 +58,14 @@ export const useNoteStore = defineStore('notes', {
             const lowerQuery = state.searchQuery.toLowerCase().trim();
             return state._allNotesCache.filter(note => {
                 const inTitle = note.title && note.title.toLowerCase().includes(lowerQuery);
+                // [核心修改] 增加对 note.id (文件名) 的搜索，使前后端逻辑统一
+                const inId = note.id.toLowerCase().includes(lowerQuery);
                 const inContent = note.content.toLowerCase().includes(lowerQuery);
                 const inTags = note.tags && note.tags.some(tag => tag.toLowerCase().includes(lowerQuery));
-                return inTitle || inContent || inTags;
+                // [核心修改] 将 inId 加入到最终的布尔判断中
+                return inTitle || inId || inContent || inTags;
             });
         },
-
-        activeNote: (state) => state._allNotesCache.find(n => n.id === state.selectedNoteId),
-
-        isEditMode: (state) => !!state.editingNote,
 
         /**
          * `allTags` getter 必须从完整的缓存 `_allNotesCache` 中计算，
@@ -96,7 +90,7 @@ export const useNoteStore = defineStore('notes', {
 
     actions: {
         /**
-         * 从后端获取笔记并填充缓存。
+         * 从后端获取所有笔记并填充缓存。
          */
         async fetchNotes() {
             this.loading = true;
@@ -121,46 +115,41 @@ export const useNoteStore = defineStore('notes', {
 
         /**
          * 保存或更新笔记。
-         * 此方法现在非常通用，可以接收一个包含 id 的完整对象，
-         * 使得 SingleNoteView 中的自动保存逻辑可以直接调用。
+         * [核心重构] 此方法现在非常通用，可以接收一个包含 id 的完整对象。
+         * 它不再关心 "编辑模式"，只负责将数据发送到后端。
+         * 创建新笔记和更新现有笔记都通过这个 action 完成。
          */
         async saveNote(payloadData) {
             this.isSyncing = true;
             this.error = null;
 
             try {
-                // 构造要发送到后端的最终数据
-                const payload = {
-                    id: this.editingNote?.id, // 优先使用编辑模式的 ID
-                    content: '',
-                    tags: [],
-                    ...payloadData // 传入的数据会覆盖默认值
-                };
-
                 // 鲁棒性检查：确保内容不为空
-                if (!payload.content || !payload.content.trim()) return;
+                if (!payloadData.content || !payloadData.content.trim()) {
+                    console.warn('[NoteStore] Canceled save due to empty content.');
+                    return;
+                }
 
                 if (window.electronAPI) {
                     // 使用 toRaw/JSON.parse 解包 Proxy 对象，确保纯净数据传递给后端
-                    const cleanPayload = JSON.parse(JSON.stringify(payload));
+                    const cleanPayload = JSON.parse(JSON.stringify(payloadData));
                     const result = await window.electronAPI.saveNote(cleanPayload);
 
                     if (result.success) {
                         // 保存成功后，刷新整个缓存以获取最新数据（包括后端生成的标题等）
                         await this.fetchNotes();
-                        this.editingNote = null; // 清除旧的编辑状态
                     } else {
                         throw new Error(result.error);
                     }
                 } else {
                     // 模拟数据逻辑
-                    const id = payload.id || `mock-${Date.now()}.md`;
+                    const id = payloadData.id || `mock-${Date.now()}.md`;
                     const index = this._allNotesCache.findIndex(n => n.id === id);
                     const newNote = {
                         id,
-                        content: payload.content,
-                        tags: payload.tags,
-                        title: payload.content.split('\n')[0].replace(/^#\s*/, '').trim(),
+                        content: payloadData.content,
+                        tags: payloadData.tags || [],
+                        title: payloadData.content.split('\n')[0].replace(/^#\s*/, '').trim(),
                         timestamp: new Date().toISOString()
                     };
                     if (index > -1) {
@@ -168,7 +157,6 @@ export const useNoteStore = defineStore('notes', {
                     } else {
                         this._allNotesCache.unshift(newNote);
                     }
-                    this.editingNote = null;
                     await new Promise(r => setTimeout(r, 200));
                 }
             } catch (err) {
@@ -195,9 +183,8 @@ export const useNoteStore = defineStore('notes', {
                 const index = this._allNotesCache.findIndex(n => n.id === id);
                 if (index > -1) this._allNotesCache.splice(index, 1);
 
-                // 清理相关的选中/编辑状态
+                // 如果被删除的笔记是当前选中的，则取消选中
                 if (this.selectedNoteId === id) this.selectedNoteId = null;
-                if (this.editingNote?.id === id) this.editingNote = null;
 
             } catch (err) {
                 console.error('Delete failed:', err);
@@ -207,29 +194,35 @@ export const useNoteStore = defineStore('notes', {
             }
         },
 
-        // --- 其他 actions 保持不变 ---
-        startEditing(note) {
-            this.editingNote = JSON.parse(JSON.stringify(note));
-            this.selectedNoteId = note.id;
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
+        // --- UI 交互 Actions ---
 
-        cancelEditing() {
-            this.editingNote = null;
-        },
-
+        /**
+         * 设置全局搜索查询。
+         * @param {string} query
+         */
         setSearchQuery(query) {
             this.searchQuery = query;
         },
 
+        /**
+         * 设置当前选中的笔记 ID。
+         * @param {string} id
+         */
         selectNote(id) {
             this.selectedNoteId = id;
         },
 
+        /**
+         * 取消笔记的选中状态。
+         */
         deselectNote() {
             this.selectedNoteId = null;
         },
 
+        /**
+         * 请求滚动到指定笔记。
+         * @param {string} noteId
+         */
         scrollToNote(noteId) {
             if (this._allNotesCache.some(n => n.id === noteId)) {
                 if (this.searchQuery) this.setSearchQuery('');
@@ -238,14 +231,6 @@ export const useNoteStore = defineStore('notes', {
             } else {
                 console.warn(`[NoteStore] 无法跳转：未找到 ID 为 ${noteId} 的笔记。`);
             }
-        },
-
-        insertTextIntoNote(textToInsert) {
-            if (!this.editingNote) {
-                alert('请先选择一篇笔记并进入编辑模式。');
-                return;
-            }
-            this.editingNote.content += `\n\n${textToInsert}`;
         }
     }
 });

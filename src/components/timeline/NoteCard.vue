@@ -5,12 +5,11 @@
       @click="navigateToNote"
   >
     <!--
-      [核心修改] 卡片的点击事件 `@click` 现在调用 `navigateToNote` 方法，
-      该方法将使用 Vue Router 进行页面跳转，而不是仅仅在当前页面更新状态。
-      这使得时间线视图成为一个导航中心。
+      卡片的点击事件 `@click` 现在调用 `navigateToNote` 方法，
+      该方法将使用 Vue Router 进行页面跳转到笔记的预览视图。
     -->
 
-    <!-- Meta Info -->
+    <!-- Meta Info: 时间和标签 -->
     <div class="note-header">
       <div class="meta-left">
         <span class="note-time">{{ formattedTime }}</span>
@@ -26,7 +25,11 @@
         意外触发父元素 `article` 的 `navigateToNote` 跳转事件。
       -->
       <div class="actions-group" @click.stop>
-        <button class="action-btn" @click="$emit('edit', note)" title="在时间线中编辑">
+        <!--
+          [核心重构] 编辑按钮现在调用 handleEdit 方法，
+          该方法将导航到单页视图的编辑模式。
+        -->
+        <button class="action-btn" @click="handleEdit" title="编辑此笔记">
           <Edit2Icon class="icon-xs" />
         </button>
         <button class="action-btn danger" @click="$emit('delete', note.id)" title="删除">
@@ -35,7 +38,7 @@
       </div>
     </div>
 
-    <!-- Content Body -->
+    <!-- Content Body: 渲染后的 Markdown 内容 -->
     <div class="markdown-body" v-html="renderedContent"></div>
 
   </article>
@@ -43,7 +46,7 @@
 
 <script setup>
 import { computed } from 'vue';
-import { useRouter } from 'vue-router'; // [核心修改] 引入 useRouter
+import { useRouter } from 'vue-router'; // 引入 useRouter
 import dayjs from 'dayjs';
 import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next';
 import { renderMarkdown } from '@/utils/markdownRenderer';
@@ -56,9 +59,10 @@ const props = defineProps({
   isSelected: Boolean
 });
 
-defineEmits(['edit', 'delete']);
+// [核心重构] 不再需要 'edit' 事件，因为导航是组件内部的行为
+defineEmits(['delete']);
 
-const router = useRouter(); // [核心修改] 实例化 router
+const router = useRouter(); // 实例化 router
 
 const formattedTime = computed(() => {
   return dayjs(props.note.timestamp).format('MMM D, HH:mm');
@@ -69,14 +73,25 @@ const renderedContent = computed(() => {
 });
 
 /**
- * [核心修改] 新增的导航方法
- * 当用户点击卡片时，此方法被调用。
+ * 导航到笔记的预览视图。
+ * 当用户点击卡片的任何非按钮区域时触发。
  */
 const navigateToNote = () => {
-  // 使用 router.push 进行程序化导航
   router.push({
-    name: 'note-view', // 导航到我们定义好的命名路由
-    params: { noteId: props.note.id } // 将当前卡片的笔记ID作为参数传递
+    name: 'note-view', // 导航到命名路由 'note-view'
+    params: { noteId: props.note.id } // 传递笔记ID作为路由参数
+  });
+};
+
+/**
+ * [核心重构] 处理编辑按钮点击事件。
+ * 它将导航到同一个单页视图，但附加一个查询参数来触发编辑模式。
+ */
+const handleEdit = () => {
+  router.push({
+    name: 'note-view',
+    params: { noteId: props.note.id },
+    query: { edit: 'true' } // 附加查询参数，通知目标页面直接进入编辑状态
   });
 };
 
@@ -90,7 +105,7 @@ const navigateToNote = () => {
   padding: 16px 20px;
   margin-bottom: 16px;
   transition: all 0.2s;
-  cursor: pointer; /* [核心修改] 将光标改为 pointer，提示用户这是一个可点击的链接 */
+  cursor: pointer; /* 将光标改为 pointer，提示用户这是一个可点击的链接 */
 
   &:hover {
     border-color: var(--border-hover);
@@ -101,7 +116,7 @@ const navigateToNote = () => {
     }
   }
 
-  /* is-selected 样式现在主要用于视觉反馈，表示“这是当前URL对应的笔记” */
+  /* is-selected 样式用于视觉反馈，表示“这是当前URL对应的笔记” */
   &.is-selected {
     border-color: var(--color-brand);
     box-shadow: 0 0 0 1px var(--color-brand-light);

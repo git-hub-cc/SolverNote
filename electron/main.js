@@ -20,10 +20,10 @@ console.info = log.info;
 console.debug = log.debug;
 
 // 引入本地模块
+// [核心修改] 从导入列表中移除 handleSearchNotes
 const {
     handleLoadNotes,
     handleSaveNote,
-    handleSearchNotes,
     handleDeleteNote
 } = require('./handlers');
 const modelManager = require('./services/modelManager');
@@ -51,7 +51,7 @@ function getNotesDir() {
     return noteDir;
 }
 
-// --- 核心业务函数 (保持不变) ---
+// --- 核心业务函数  ---
 async function reindexAllNotes() {
     console.info('[AI] 开始对所有现有笔记进行全量重新索引...');
     try {
@@ -193,7 +193,8 @@ app.whenReady().then(async () => {
     // --- 注册 IPC 处理程序 ---
     ipcMain.handle('notes:load', handleLoadNotes);
     ipcMain.handle('notes:save', handleSaveNote);
-    ipcMain.handle('notes:search', handleSearchNotes);
+    // [核心修改] 移除后端的搜索 IPC 处理器
+    // ipcMain.handle('notes:search', handleSearchNotes);
     ipcMain.handle('notes:delete', handleDeleteNote);
 
     ipcMain.handle('models:list', modelManager.listLocalModels);

@@ -92,7 +92,6 @@ const filterByTag = (tagName) => {
 </script>
 
 <style lang="scss" scoped>
-/* 样式部分保持不变，它们的设计与数据逻辑解耦，无需修改 */
 .tags-view {
   padding: 40px 10%;
   height: 100%;

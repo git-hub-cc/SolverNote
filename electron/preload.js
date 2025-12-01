@@ -6,7 +6,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // --- 笔记操作 API ---
     loadNotes: () => ipcRenderer.invoke('notes:load'),
     saveNote: (noteData) => ipcRenderer.invoke('notes:save', noteData),
-    searchNotes: (query) => ipcRenderer.invoke('notes:search', query),
+    // [核心修改] 移除 searchNotes API
+    // 由于搜索功能已完全迁移到前端 Pinia store 中处理，
+    // 不再需要通过 IPC 调用后端进行搜索。
+    // searchNotes: (query) => ipcRenderer.invoke('notes:search', query),
     deleteNote: (id) => ipcRenderer.invoke('notes:delete', id),
 
     // --- 模型管理 API ---

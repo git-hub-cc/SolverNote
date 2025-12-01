@@ -108,27 +108,13 @@ async function handleDeleteNote(event, id) {
     }
 }
 
-async function handleSearchNotes(event, query) {
-    const allNotes = await _getAllNotes();
-    if (!query || typeof query !== 'string' || query.trim() === '') {
-        return allNotes;
-    }
-    const lowerQuery = query.toLowerCase().trim();
-
-    return allNotes.filter(note => {
-        // [修改] 增加对 title 的搜索
-        const inTitle = note.title && note.title.toLowerCase().includes(lowerQuery);
-        const inId = note.id.toLowerCase().includes(lowerQuery);
-        const inContent = note.content.toLowerCase().includes(lowerQuery);
-        const inTags = note.tags && note.tags.some(tag => tag.toLowerCase().includes(lowerQuery));
-
-        return inTitle || inId || inContent || inTags;
-    });
-}
+// [核心修改] 移除 handleSearchNotes 函数
+// 由于搜索逻辑已完全移至前端的 Pinia Store 中，后端的搜索实现已不再需要。
+// 删除此函数可以减少代码冗余并确保逻辑的单一来源。
 
 module.exports = {
     handleLoadNotes,
     handleSaveNote,
-    handleSearchNotes,
+    // [核心修改] 从模块导出中移除 handleSearchNotes
     handleDeleteNote
 };

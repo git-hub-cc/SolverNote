@@ -1,10 +1,9 @@
 ---
-date: '2025-11-30T18:03:29.028Z'
+date: '2025-12-01T04:08:18.184Z'
 tags:
   - AI
   - LLM
   - Guide
-  - Ollama
 title: 本地LLM环境搭建实用指南
 ---
 
@@ -16,20 +15,20 @@ title: 本地LLM环境搭建实用指南
 
 Ollama 是一个将安装、配置和运行过程打包好的一站式工具，非常简单。
 
-1.  **安装 Ollama**：从官网下载并安装对应你操作系统的版本。
+1.  **安装 Ollama**：从官网下载并安装对应你操作系统的版本。 
 2.  **下载模型**：打开终端或命令行，运行 `ollama pull qwen:0.5b`。这将自动从模型库下载并配置好一个轻量级的模型。
 3.  **运行模型**：运行 `ollama run qwen:0.5b`，你就可以直接在终端里和AI对话了。
 
-## 使用 llama.cpp（更灵活）
+## 使用 llama.cpp（更灵活）321321
 
 `llama.cpp` 是一个用C++编写的高性能推理引擎，给予用户更多控制权。
 
 1.  **获取源码**：从GitHub克隆 `llama.cpp` 的仓库。
 2.  **编译程序**：根据官方文档进行编译。通常是运行 `make` 命令。
-3.  **下载GGUF模型**：你需要手动从Hugging Face或ModelScope等平台下载一个 `.gguf` 格式的模型文件。例如，`qwen1_5-0_5b-chat-q4_k_m.gguf`。
+3.  **下载GGUF模型**：你需要手动从Hugging Face或ModelScope等平台下载一个 `.gguf` 格式的模型文件。例如，`qwen1_5-0_5b-chat-q4_k_m.gguf`。123
 4.  **开始推理**：在终端中运行类似以下的命令：
     ```bash
-    ./main -m /path/to/your/model.gguf -p "Hello, who are you?"
+    ./main -m /path/to/your/model.gguf -p "Hello, who are you?"  
     ```
     这里的 `-m` 参数指向你下载的GGUF文件路径。选择一个合适的量化版本（如 `Q4_K_M`）对于在内存有限的设备上运行至关重要。
 

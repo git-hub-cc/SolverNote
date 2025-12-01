@@ -1,6 +1,5 @@
 <template>
   <div class="app-layout">
-    <!-- 模板部分保持不变 -->
     <NavigationRail class="layout-nav" />
     <main class="layout-main">
       <transition name="fade">
@@ -22,16 +21,16 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router' // [新增] 引入 useRoute
 import NavigationRail from '@/components/layout/NavigationRail.vue'
 import SolverSidebar from '@/components/layout/SolverSidebar.vue'
-import { useNoteStore } from '@/stores/noteStore'
 import { useSolverStore } from '@/stores/solverStore'
-import { useUIStore } from '@/stores/uiStore' // 引入 UI store
+import { useUIStore } from '@/stores/uiStore'
 import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next'
 
-const noteStore = useNoteStore()
 const solverStore = useSolverStore()
-const uiStore = useUIStore() // 实例化 UI store
+const uiStore = useUIStore()
+const route = useRoute() // [新增] 实例化 route
 
 const isSidebarOpen = ref(true)
 
@@ -39,18 +38,23 @@ const toggleSidebar = () => {
   isSidebarOpen.value = !isSidebarOpen.value
 }
 
-// 核心联动逻辑 (保持不变)
-watch(() => noteStore.selectedNoteId, (newId) => {
-  if (newId) {
+
+// --- [核心修改] 移除旧的全局联动逻辑 ---
+// watch(() => noteStore.selectedNoteId, (newId) => { ... })
+// 上述侦听器已被移除。现在，AI 上下文的分析由各个视图组件 (StreamTimeline.vue 和 SingleNoteView.vue)
+// 根据当前的路由和用户操作来独立触发，使得逻辑更加清晰和解耦。
+
+
+// --- [新增] 路由驱动的侧边栏行为 ---
+// 侦听路由变化，当用户进入单个笔记页面时，自动打开 AI 侧边栏，以便展示智能关联。
+watch(() => route.name, (routeName) => {
+  if (routeName === 'note-view') {
     isSidebarOpen.value = true
-    solverStore.analyzeContext(newId)
   }
-})
+});
 
 
-// --- [核心修改] 主题管理逻辑 ---
-
-// 侦听最终生效的主题 (`effectiveTheme`)，并更新 `<html>` class 以应用 CSS 变量。
+// --- 主题管理逻辑 (无变化) ---
 watch(() => uiStore.effectiveTheme, (newTheme) => {
   const root = document.documentElement;
   if (newTheme === 'dark') {
@@ -59,43 +63,30 @@ watch(() => uiStore.effectiveTheme, (newTheme) => {
     root.classList.remove('dark');
   }
 }, {
-  immediate: true // 立即执行一次，确保应用加载时主题正确
+  immediate: true
 });
 
-
-/**
- * [核心新增] 侦听用户的偏好设置 (`themePreference`)。
- * 当用户在设置页面更改偏好时 (例如从 'system' 改为 'dark')，
- * 这个侦听器会被触发，并将新的偏好设置发送给主进程，
- * 以便主进程更新原生窗口（标题栏）的主题。
- */
 watch(() => uiStore.themePreference, (newPreference) => {
-  // 检查 Electron API 是否存在，确保在浏览器环境中不会报错
   if (window.electronAPI && window.electronAPI.setNativeTheme) {
     window.electronAPI.setNativeTheme(newPreference);
   }
 }, {
-  immediate: true // 立即执行一次，确保应用启动时主进程的主题与渲染进程同步
+  immediate: true
 });
 
-
+// --- 生命周期钩子 (无变化) ---
 onMounted(async () => {
   solverStore.setupListeners();
-
-  // 调用 uiStore 的初始化方法，它会处理所有与 Electron 的通信
   uiStore.initializeTheme();
 })
 
 onUnmounted(() => {
   solverStore.cleanupListeners();
-
-  // 调用 uiStore 的清理方法
   uiStore.cleanup();
 })
 </script>
 
 <style scoped>
-/* (所有样式保持不变) */
 .app-layout {
   display: flex;
   height: 100vh;
