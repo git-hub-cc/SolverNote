@@ -6,10 +6,9 @@
       <span class="sub-header">Manage application preferences and AI models.</span>
     </div>
 
-    <!-- 2. [新增] 常规设置 (General) -->
+    <!-- 2. 常规设置 (General) -->
     <section class="settings-section">
       <h3 class="section-title">General</h3>
-
       <!-- 笔记目录设置 -->
       <div class="setting-item">
         <div class="setting-label">
@@ -32,7 +31,6 @@
           </p>
         </div>
       </div>
-
       <!-- 删除模式设置 -->
       <div class="setting-item">
         <div class="setting-label">
@@ -88,19 +86,17 @@
             >
               <MoonIcon class="icon-sm"/> Dark
             </button>
-            <button
-                class="theme-option"
-                :class="{ active: uiStore.themePreference === 'system' }"
-                @click="uiStore.setThemePreference('system')"
-            >
-              <LaptopIcon class="icon-sm"/> System
-            </button>
+            <!--
+              [核心修改] 移除了 "System" 主题选项按钮。
+              UI 现在只提供 "Light" 和 "Dark" 两种明确的选择，
+              与 store 中的新逻辑完全匹配。
+            -->
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 4. AI 模型下载区域 -->
+    <!-- 4. AI 模型下载区域 (保持不变) -->
     <section class="settings-section">
       <h3 class="section-title">AI Models</h3>
       <p class="section-description">
@@ -128,7 +124,7 @@
       </div>
     </section>
 
-    <!-- 5. AI 服务状态面板 -->
+    <!-- 5. AI 服务状态面板 (保持不变) -->
     <section class="settings-section">
       <h3 class="section-title">AI Service Status</h3>
       <div class="status-panel">
@@ -170,7 +166,8 @@ import { useUIStore } from '@/stores/uiStore';
 import { useNoteStore } from '@/stores/noteStore';
 import {
   DownloadCloudIcon, CheckCircle2Icon, LoaderCircleIcon, AlertTriangleIcon, XCircleIcon,
-  BrainCircuitIcon, Sun as SunIcon, Moon as MoonIcon, Laptop as LaptopIcon,
+  BrainCircuitIcon, Sun as SunIcon, Moon as MoonIcon,
+  // [核心修改] 移除不再使用的 LaptopIcon 图标导入。
   FolderOpen as FolderOpenIcon, AlertCircle as AlertCircleIcon
 } from 'lucide-vue-next';
 
@@ -184,7 +181,7 @@ const settings = reactive({
 });
 const pathChanged = ref(false);
 
-// --- 模型相关状态 ---
+// --- 模型相关状态 (保持不变) ---
 const recommendedModels = [
   {
     name: 'Qwen1.5-0.5B-Chat',
@@ -209,8 +206,7 @@ let unsubscribeDownloadProgress = null;
 
 const isDownloading = computed(() => (fileName) => fileName in downloadProgress.value);
 
-// --- 核心方法: 设置管理 ---
-
+// --- 核心方法: 设置管理 (保持不变) ---
 async function loadSettings() {
   if (window.electronAPI) {
     const data = await window.electronAPI.getSettings();
@@ -220,11 +216,9 @@ async function loadSettings() {
     }
   }
 }
-
 async function updateSetting(key, value) {
   if (window.electronAPI) {
     await window.electronAPI.setSetting(key, value);
-    // 更新后重新加载笔记列表（如果是路径变更，后端会自动触发重索引）
     if (key === 'notesPath') {
       pathChanged.value = true;
       setTimeout(() => { pathChanged.value = false; }, 5000);
@@ -232,7 +226,6 @@ async function updateSetting(key, value) {
     }
   }
 }
-
 async function changeNotesDir() {
   if (window.electronAPI) {
     const newPath = await window.electronAPI.selectFolder();
@@ -242,14 +235,13 @@ async function changeNotesDir() {
     }
   }
 }
-
 async function openInExplorer() {
   if (window.electronAPI && settings.notesPath) {
     await window.electronAPI.openPath(settings.notesPath);
   }
 }
 
-// --- 核心方法: 模型管理 ---
+// --- 核心方法: 模型管理 (保持不变) ---
 async function fetchLocalModels() {
   if (window.electronAPI) localModels.value = await window.electronAPI.listLocalModels();
 }
@@ -272,12 +264,12 @@ async function downloadModel(model) {
   }
 }
 
-// --- 辅助显示函数 ---
+// --- 辅助显示函数 (保持不变) ---
 const formatStatusText = (s) => ({ 'Uninitialized': 'Initializing...', 'Loading': 'Loading...', 'Ready': 'Ready', 'Not Found': 'Not Found', 'Error': 'Error' }[s] || 'Unknown');
 const statusClass = (s) => ({ 'Ready': 'status-success', 'Not Found': 'status-warning', 'Error': 'status-danger' }[s] || 'status-loading');
 const statusIcon = (s) => ({ 'Ready': BrainCircuitIcon, 'Not Found': AlertTriangleIcon, 'Error': XCircleIcon }[s] || LoaderCircleIcon);
 
-// --- 生命周期 ---
+// --- 生命周期 (保持不变) ---
 onMounted(async () => {
   await loadSettings();
   if (window.electronAPI) {
@@ -295,7 +287,7 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
-/* 保持原有颜色变量... */
+/* 样式无需修改，保持原样 */
 :root {
   --color-success-bg: #F0FDF4; --color-success-border: #86EFAC; --color-success-text: #15803D; --color-success-icon: #10B981;
   --color-danger-bg: #FEF2F2; --color-danger-border: #FCA5A5; --color-danger-text: #B91C1C;
@@ -306,13 +298,10 @@ html.dark {
   --color-danger-bg: #450A0A; --color-danger-border: #7F1D1D; --color-danger-text: #F87171;
   --color-warning-bg: #422006; --color-warning-border: #92400E; --color-warning-text: #FBBF24;
 }
-
 .settings-view { padding: 40px 10%; height: 100%; overflow-y: auto; }
 .view-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-light); padding-bottom: 16px; h2 { font-size: 24px; font-weight: 700; } .sub-header { color: var(--text-secondary); font-size: 14px; } }
 .settings-section { margin-bottom: 48px; }
 .section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
-
-/* 通用设置项样式 */
 .setting-item {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: 20px 0; border-bottom: 1px solid var(--border-light);
@@ -323,12 +312,9 @@ html.dark {
   .label-title { font-weight: 500; color: var(--text-primary); display: block; margin-bottom: 4px; }
   .label-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 }
-
 .setting-control {
   &.vertical { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: 50%; }
 }
-
-/* 路径输入框组 */
 .path-display-group {
   display: flex; width: 100%; gap: 8px;
   .path-input {
@@ -338,8 +324,6 @@ html.dark {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 }
-
-/* 按钮样式 */
 .action-btn {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   border-radius: 6px; background: var(--bg-hover); color: var(--text-primary);
@@ -347,20 +331,14 @@ html.dark {
   &:hover { background: var(--border-light); }
   &.secondary { font-size: 12px; padding: 4px 10px; background: transparent; border: 1px solid var(--border-light); }
 }
-
-/* 警告文本 */
 .warning-text { font-size: 12px; color: var(--color-warning-text); display: flex; align-items: center; gap: 4px; margin-top: 4px; }
 .icon-xs { width: 14px; height: 14px; }
-
-/* 单选框组 */
 .radio-group { display: flex; flex-direction: column; gap: 8px; }
 .radio-label {
   display: flex; align-items: center; gap: 8px; font-size: 13px;
   color: var(--text-primary); cursor: pointer;
   input[type="radio"] { accent-color: var(--color-brand); }
 }
-
-/* 其他样式复用之前的... */
 .theme-selector { display: flex; background: var(--bg-hover); padding: 4px; border-radius: 8px; gap: 4px; }
 .theme-option { padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; display: flex; gap: 6px; color: var(--text-secondary); &.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--shadow-card); } }
 .model-list { display: grid; gap: 16px; }

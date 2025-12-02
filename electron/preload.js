@@ -2,21 +2,23 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// 使用 contextBridge 在渲染进程的 window 对象上安全地暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
     // --- 笔记与文件系统 API ---
     loadNotes: () => ipcRenderer.invoke('notes:load'),
     saveNote: (noteData) => ipcRenderer.invoke('notes:save', noteData),
     deleteNote: (id) => ipcRenderer.invoke('notes:delete', id),
 
-    // [Phase 2 新增]
-    getFileTree: () => ipcRenderer.invoke('fs:get-tree'), // 需在 main.js 注册
+    getFileTree: () => ipcRenderer.invoke('fs:get-tree'),
     createFolder: (path) => ipcRenderer.invoke('fs:create-folder', path),
     renamePath: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', oldPath, newPath),
     movePath: (sourcePath, targetDir) => ipcRenderer.invoke('fs:move', sourcePath, targetDir),
 
+    // 监听主进程发出的笔记更新通知
     onNotesUpdated: (callback) => {
         const handler = () => callback();
         ipcRenderer.on('notes:updated', handler);
+        // 返回一个取消监听的函数，以便组件卸载时清理
         return () => ipcRenderer.removeListener('notes:updated', handler);
     },
 
@@ -61,11 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('vectors:search', { queryText, traceId, excludeId }),
 
     // --- 主题 ---
-    getSystemTheme: () => ipcRenderer.invoke('theme:get-system'),
-    onThemeUpdate: (callback) => {
-        const handler = (event, theme) => callback(theme);
-        ipcRenderer.on('theme:updated', handler);
-        return () => ipcRenderer.removeListener('theme:updated', handler);
-    },
+    // [关键修改] 移除了 getSystemTheme 和 onThemeUpdate API。
+    // 主题逻辑已完全由渲染进程通过 setNativeTheme 控制，不再需要从主进程获取系统主题。
     setNativeTheme: (theme) => ipcRenderer.send('theme:set', theme)
 });

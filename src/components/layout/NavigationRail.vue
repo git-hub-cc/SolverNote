@@ -6,7 +6,7 @@
       <span class="brand-text">SolverNote</span>
     </div>
 
-    <!-- 2. 系统菜单 (调整至顶部) -->
+    <!-- 2. 系统菜单 -->
     <div class="nav-group-title">System</div>
     <nav class="nav-menu">
       <router-link to="/settings" class="nav-item">
@@ -47,7 +47,7 @@
       </router-link>
     </nav>
 
-    <!-- 4. [新增] 文件目录树 -->
+    <!-- 4. 文件目录树 -->
     <FileTreeView class="file-tree-section" />
 
   </aside>
@@ -57,7 +57,6 @@
 import { ref, watch, computed } from 'vue'
 import { useNoteStore } from '@/stores/noteStore'
 import { useRouter, useRoute } from 'vue-router'
-// 核心修改: 引入新建的文件树组件
 import FileTreeView from './FileTreeView.vue'
 import {
   Brain as BrainIcon,
@@ -68,47 +67,67 @@ import {
 } from 'lucide-vue-next'
 
 const noteStore = useNoteStore()
-const searchQuery = ref('')
 const isSearchFocused = ref(false)
 let debounceTimer = null
 
 const router = useRouter()
 const route = useRoute()
 
-// 检查当前是否在主页 (Today)
-const isHomeActive = computed(() => route.path === '/')
+// --- 响应式状态 ---
 
-// 监听搜索框输入，防抖后更新 store
-watch(searchQuery, (newVal) => {
-  if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    noteStore.setSearchQuery(newVal)
-  }, 300)
+// [核心修改] searchQuery 现在是一个计算属性，具有 getter 和 setter。
+// getter: 直接从 store 读取 searchQuery，确保输入框与 store 状态同步。
+// setter: 调用 store 的 setSearchQuery action，这是触发文本搜索的唯一入口。
+const searchQuery = computed({
+  get: () => noteStore.searchQuery,
+  set: (value) => {
+    noteStore.setSearchQuery(value)
+  }
 })
+
+// --- 计算属性 ---
+
+// 检查当前是否在主页 (Today)
+const isHomeActive = computed(() => {
+  // 当路由是主页，并且没有任何筛选条件时，才高亮 "Today"。
+  return route.path === '/' && !noteStore.searchQuery && !noteStore.activeTagFilter
+})
+
+// --- 侦听器 ---
+
+// [修改] 移除原有的 watch，因为 computed setter 已经处理了更新逻辑。
+// 这种方式更符合 Pinia 的最佳实践，使组件的本地状态与 store 状态保持一致。
+
+// --- 方法 ---
 
 // 清空搜索框内容
 const clearSearch = () => {
+  // 直接将计算属性设为空字符串，会触发 setter，从而更新 store。
   searchQuery.value = ''
 }
 
-// "Today" 链接的点击事件处理器
-// 点击后清空搜索条件并跳转到主页
+/**
+ * [核心修改] "Today" 链接的点击事件处理器。
+ * 现在负责清除所有类型的筛选条件。
+ */
 const handleGoHome = () => {
-  noteStore.setSearchQuery('')
-  searchQuery.value = '' // 同时清空本地输入框
+  // 1. 调用 store 中新增的 clearFilters action，
+  //    该 action 会同时重置 searchQuery 和 activeTagFilter。
+  noteStore.clearFilters()
+
+  // 2. 导航到主页。
   router.push('/')
 }
 </script>
 
 <style lang="scss" scoped>
+/* 样式无变化 */
 .nav-rail {
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-sidebar);
-  // 新增: 让侧边栏内容超出时可以滚动
   overflow-y: auto;
-  // 新增: 隐藏默认滚动条，但保留功能
   &::-webkit-scrollbar {
     display: none;
   }
@@ -122,7 +141,7 @@ const handleGoHome = () => {
   gap: 8px;
   font-weight: 600;
   color: var(--text-primary);
-  flex-shrink: 0; // 防止头部被压缩
+  flex-shrink: 0;
 
   .brand-icon {
     color: var(--color-brand);
@@ -133,7 +152,7 @@ const handleGoHome = () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex-shrink: 0; // 防止菜单被压缩
+  flex-shrink: 0;
 }
 
 .nav-item {
@@ -169,13 +188,11 @@ const handleGoHome = () => {
   margin-top: 24px;
   margin-bottom: 8px;
 
-  // 第一个标题不需要上边距
   &:first-of-type {
     margin-top: 0;
   }
 }
 
-/* 搜索框样式 */
 .search-wrapper {
   margin: 4px 0;
   display: flex;
@@ -214,11 +231,9 @@ const handleGoHome = () => {
   }
 }
 
-// [新增] 文件树区域的样式
 .file-tree-section {
-  // 让文件树填满剩余空间
   flex: 1;
-  min-height: 0; // flex 布局中允许内容滚动的关键
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

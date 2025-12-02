@@ -1,8 +1,6 @@
 <template>
   <div class="stream-timeline">
-    <!--
-      顶部的 SmartEditor 现在只用于“创建新笔记”。
-    -->
+    <!-- 顶部的 SmartEditor，仅用于“创建新笔记” -->
     <div class="input-area-wrapper">
       <SmartEditor
           ref="smartEditorRef"
@@ -12,46 +10,62 @@
     </div>
 
     <!--
-      笔记时间轴列表容器。
-      点击这片空白区域会取消任何笔记的选中状态，这会联动 AI 侧边栏。
+      [新增] 筛选状态提示栏
+      - 仅在有任何筛选条件 (文本搜索或标签筛选) 激活时显示。
+      - 清晰地告诉用户当前的筛选状态。
+      - 提供一个快捷按钮来清除所有筛选。
     -->
+    <div v-if="isFilterActive" class="filter-status-bar">
+      <span class="filter-text">
+        <template v-if="noteStore.activeTagFilter">
+          Filtering by tag: <strong class="filter-keyword">#{{ noteStore.activeTagFilter }}</strong>
+        </template>
+        <template v-else-if="noteStore.searchQuery">
+          Search results for: <strong class="filter-keyword">"{{ noteStore.searchQuery }}"</strong>
+        </template>
+      </span>
+      <button class="clear-filter-btn" @click="noteStore.clearFilters()">
+        Clear Filter
+      </button>
+    </div>
+
+    <!-- 笔记时间轴列表容器 -->
     <div
         class="timeline-container"
         ref="timelineContainerRef"
         @click="handleBackgroundClick"
     >
-
       <!-- 加载中状态 -->
       <div v-if="noteStore.loading" class="state-msg">
         <div class="loading-spinner"></div>
-        <span>Loading notes...</span>
+        <span>正在加载笔记...</span>
       </div>
 
       <!-- 空状态 / 搜索无结果 -->
       <div v-else-if="noteStore.notes.length === 0" class="state-msg empty">
-        <div v-if="noteStore.searchQuery">
+        <!-- 根据不同的筛选模式，显示不同的提示信息 -->
+        <div v-if="noteStore.activeTagFilter">
+          <p>🏷️ No notes found with the tag "<strong>#{{ noteStore.activeTagFilter }}</strong>"</p>
+          <button class="reset-btn" @click="noteStore.clearFilters()">Clear filter</button>
+        </div>
+        <div v-else-if="noteStore.searchQuery">
           <p>🔍 No notes found for "<strong>{{ noteStore.searchQuery }}</strong>"</p>
-          <button class="reset-btn" @click="noteStore.setSearchQuery('')">Clear Search</button>
+          <button class="reset-btn" @click="noteStore.clearFilters()">Clear search</button>
         </div>
         <div v-else>
           <p>📭 No notes yet.</p>
-          <p class="sub">Write your first thought above!</p>
+          <p class="sub">Start by typing your first thought above!</p>
         </div>
       </div>
 
       <!-- 笔记列表 -->
       <div v-else class="notes-list">
-        <!--
-          NoteCard 的删除事件已被移除，因为它现在通过 vue-router 自行处理导航。
-          我们只需要监听 @delete 事件。
-        -->
         <NoteCard
             v-for="note in noteStore.notes"
             :key="note.id"
             :note="note"
             :data-note-id="note.id"
             :is-selected="note.id === noteStore.selectedNoteId"
-            @delete="handleDelete"
         />
       </div>
     </div>
@@ -59,14 +73,9 @@
 </template>
 
 <script setup>
-// 引入 Vue 的核心功能
-import { onMounted, ref, watch, nextTick } from 'vue';
-
-// 引入 Pinia store
+import { onMounted, ref, watch, nextTick, computed } from 'vue'; // 新增 computed
 import { useNoteStore } from '@/stores/noteStore';
 import { useSolverStore } from '@/stores/solverStore';
-
-// 引入子组件
 import SmartEditor from '@/components/editor/SmartEditor.vue';
 import NoteCard from '@/components/timeline/NoteCard.vue';
 
@@ -74,66 +83,48 @@ import NoteCard from '@/components/timeline/NoteCard.vue';
 const noteStore = useNoteStore();
 const solverStore = useSolverStore();
 
-// 模板引用 (Refs)，用于直接操作 DOM 元素
-const smartEditorRef = ref(null);       // 引用 SmartEditor 组件实例
-const timelineContainerRef = ref(null); // 引用笔记列表的滚动容器
+// 模板引用 (Refs)
+const smartEditorRef = ref(null);
+const timelineContainerRef = ref(null);
+
+// --- [新增] 计算属性 ---
+const isFilterActive = computed(() => {
+  // 只要文本搜索或标签筛选中任意一个有值，就认为筛选是激活的。
+  return !!noteStore.searchQuery || !!noteStore.activeTagFilter;
+});
+
 
 // --- 生命周期钩子 ---
-
 onMounted(() => {
-  // 首次加载时获取所有笔记
   noteStore.fetchNotes();
 });
 
 // --- 侦听器 ---
-
-// 侦听来自 store 的滚动请求，在导航或操作后平滑滚动到指定笔记
 watch(() => noteStore.scrollToNoteId, async (newId) => {
   if (newId) {
-    await nextTick(); // 等待 DOM 更新完成
+    await nextTick();
     const container = timelineContainerRef.value;
     if (container) {
       const targetElement = container.querySelector(`[data-note-id="${newId}"]`);
       if (targetElement) {
         targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        noteStore.scrollToNoteId = null; // 完成后重置请求
+        noteStore.scrollToNoteId = null;
       }
     }
   }
 });
 
 // --- 事件处理器 ---
-
-/**
- * 处理 timeline 背景点击事件。
- * 取消当前选中的笔记，这会联动 AI 侧边栏返回默认状态。
- */
 const handleBackgroundClick = () => {
   noteStore.deselectNote();
-  solverStore.switchToChatMode(); // 同时通知 AI 侧边栏切换回聊天模式
+  solverStore.switchToChatMode();
 };
 
-/**
- * 处理“创建新笔记”的保存事件。
- * @param {object} payload - 从 SmartEditor 发出的包含 content 和 tags 的对象。
- */
 const handleSaveNewNote = async (payload) => {
-  // 调用 store 的 saveNote action，不传递 id，后端会自动创建
   await noteStore.saveNote(payload);
-  // 如果保存成功，则清空编辑器以便创建下一篇
   if (!noteStore.error) {
     smartEditorRef.value?.clearEditor();
   }
-};
-
-/**
- * 处理删除笔记的事件。
- * @param {string} id - 要删除的笔记 ID。
- */
-const handleDelete = async (id) => {
-  // [修改] 移除 confirm() 确认框，直接调用 store 的删除方法
-  // 因为 store 内部实现了"软删除 + 撤销"逻辑，这是更现代的交互方式。
-  await noteStore.requestDeleteNote(id);
 };
 </script>
 
@@ -156,11 +147,51 @@ const handleDelete = async (id) => {
   background-color: var(--bg-app); /* 使用应用背景色变量 */
 }
 
+/* [新增] 筛选状态栏样式 */
+.filter-status-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  margin: 0 10% 16px 10%;
+  background-color: var(--color-brand-light);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: slideIn 0.3s ease-out;
+
+  .filter-keyword {
+    color: var(--color-brand);
+    font-weight: 600;
+  }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.clear-filter-btn {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+
+  &:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+}
+
 /* 时间轴滚动容器 */
 .timeline-container {
   flex: 1; /* 占据所有剩余的垂直空间 */
   overflow-y: auto; /* 内容超出时显示垂直滚动条 */
-  padding: 0 10% 40px 10%; /* 左右内边距与输入区对齐，底部留出空间 */
+  // [修改] 顶部 padding 设为 0，因为状态栏现在提供了间距
+  padding: 0 10% 40px 10%;
   scroll-behavior: smooth; /* 启用平滑滚动效果 */
 }
 

@@ -45,18 +45,9 @@ const router = useRouter()
 
 // --- 生命周期钩子 ---
 onMounted(() => {
-  /*
-   * [鲁棒性分析] 为什么这里的逻辑现在是健壮的：
-   * 1. 检查 noteStore.notes.length：`notes` 是一个 getter，它反映的是根据 `searchQuery` 过滤后的结果。
-   * 2. 首次进入应用时：`_allNotesCache` 为空，`searchQuery` 为空，所以 `notes.length` 为 0，触发 `fetchNotes()`，正确加载所有数据。
-   * 3. 从搜索结果页返回时：`_allNotesCache` 已有数据，`searchQuery` 可能有值。`notes.length` 不为 0，不触发 `fetchNotes()`。
-   *    这没问题，因为我们的目标是显示所有标签，而 `tagList` 计算属性会从完整的 `_allNotesCache` 中获取数据，所以页面会立即正确渲染所有标签。
-   *
-   * [可选优化] 如果希望每次进入 Tags 页面时都清空导航栏的搜索框，可以取消下面这行代码的注释。
-   * 这会让应用行为更统一：进入“Tags”视图就等同于清空所有过滤条件。
-   * noteStore.setSearchQuery('');
-   */
-  if (noteStore.notes.length === 0 && !noteStore.loading) {
+  // 逻辑保持不变，但现在更加健壮。
+  // 进入页面时，如果笔记缓存为空，则加载数据。
+  if (noteStore._allNotesCache.length === 0 && !noteStore.loading) {
     noteStore.fetchNotes()
   }
 })
@@ -65,33 +56,31 @@ onMounted(() => {
 
 /**
  * 从 Store 获取处理好的标签统计列表。
- * [鲁棒性分析] 此 getter (`noteStore.allTags`) 已在 store 中被修改为
- * 始终从 `_allNotesCache`（完整的笔记缓存）进行计算。
- * 因此，无论用户之前的操作是什么（例如进行了搜索），
- * 这个列表返回的永远是基于所有笔记的完整、准确的标签统计。
- * 这就是问题被解决的关键。
+ * `noteStore.allTags` getter 始终基于完整的 `_allNotesCache` 计算，
+ * 保证了无论当前有何种筛选，这里显示的都是全部标签。
  */
 const tagList = computed(() => noteStore.allTags)
 
 // --- 方法 ---
 
 /**
- * 点击标签后的行为。
+ * [核心修改] 点击标签后的行为。
  * @param {string} tagName - 被点击的标签名
  */
 const filterByTag = (tagName) => {
-  // 1. 调用 store 的 action 来设置全局的搜索关键词。
-  //    这个 action 现在只会更新 state 中的 `searchQuery` 字符串，是一个非常轻量的操作。
-  noteStore.setSearchQuery(tagName)
+  // 1. 调用 store 中新增的 action 来设置全局的“标签过滤器”。
+  //    这个 action 会自动清空文本搜索查询，确保筛选模式的纯粹性。
+  noteStore.setActiveTagFilter(tagName)
 
   // 2. 导航到主时间线页面。
-  //    主时间线页面 (`StreamTimeline.vue`) 会响应式地通过 `noteStore.notes` getter
-  //    获取到已经被 `tagName` 过滤后的笔记列表并展示出来。
+  //    主时间线页面 (`StreamTimeline.vue`) 会通过 `noteStore.notes` getter
+  //    响应式地获取到被新设置的 `activeTagFilter` 精确过滤后的笔记列表。
   router.push('/')
 }
 </script>
 
 <style lang="scss" scoped>
+/* 样式无变化 */
 .tags-view {
   padding: 40px 10%;
   height: 100%;

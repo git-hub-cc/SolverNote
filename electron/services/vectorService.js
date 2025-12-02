@@ -1,10 +1,15 @@
 // electron/services/vectorService.js
 
 const path = require('path');
-const fs = require('fs'); // [新增] 引入 fs 模块用于校验文件存在性
+const fs = require('fs');
 const { app } = require('electron');
 const matter = require('gray-matter');
 const log = require('electron-log');
+// [关键修复] 引入 electron-store 用于读取用户配置
+const Store = require('electron-store');
+
+// [关键修复] 实例化 store，以便访问应用的持久化设置
+const store = new Store();
 
 // 常量定义
 const CHUNK_SIZE = 500;
@@ -18,16 +23,21 @@ let db = null;
 let table = null;
 
 /**
- * 内部辅助：获取笔记存储目录
- * 确保与 handlers.js 中的逻辑一致
+ * [关键修复] 内部辅助函数：获取用户配置的笔记存储目录。
+ * 此函数现在从 electron-store 读取路径，确保与应用设置保持一致，
+ * 解决了之前因硬编码默认路径而导致无法正确清理幽灵索引的问题。
+ * @returns {string} 笔记目录的绝对路径。
  */
 function getNotesDir() {
-    const noteDir = path.join(process.cwd(), 'notes');
-    if (!fs.existsSync(noteDir)) {
-        fs.mkdirSync(noteDir, { recursive: true });
+    // 从配置中读取路径，如果未配置，则使用当前工作目录下的 'notes' 文件夹作为默认值
+    const configuredPath = store.get('notesPath', path.join(process.cwd(), 'notes'));
+    // 确保目录存在
+    if (!fs.existsSync(configuredPath)) {
+        fs.mkdirSync(configuredPath, { recursive: true });
     }
-    return noteDir;
+    return configuredPath;
 }
+
 
 // --- 初始化逻辑 ---
 
@@ -168,16 +178,10 @@ async function deleteNoteIndex(noteId) {
     }
 }
 
-// --- 核心搜索逻辑 (重点修改部分) ---
+// --- 核心搜索逻辑 ---
 
 /**
  * 根据查询文本，在 LanceDB 中搜索语义上相似的笔记文本块。
- *
- * 增强功能：
- * 1. 幽灵数据清洗：自动检测并删除数据库中存在但文件系统中已不存在的索引。
- * 2. 相似度熔断：如果内容相似度过高(>99.5%)，即使ID不同也视为重复内容过滤。
- * 3. 严格ID过滤：使用 NFC 标准化确保跨平台文件名匹配准确。
- *
  * @param {string} queryText - 用户的搜索查询。
  * @param {string} traceId - 用于追踪本次请求的唯一ID。
  * @param {string} [excludeId] - (可选) 需要排除的笔记ID。
@@ -190,71 +194,56 @@ async function searchSimilarNotes(queryText, traceId, excludeId, targetLimit = 5
         return [];
     }
     try {
+        // 使用修复后的函数获取正确的笔记目录
         const notesDir = getNotesDir();
 
-        // --- 1. 生成查询向量 ---
+        // 1. 生成查询向量
         log.debug(`[Vector Service][${traceId}] 正在为查询创建嵌入向量...`);
         const queryVector = await createEmbedding(queryText);
 
-        // --- 2. 构造查询链 ---
-        // 策略：过量获取 (Over-fetching)，取 5 倍数量以应对过滤带来的损耗
+        // 2. 构造查询链
         const fetchLimit = targetLimit * 5;
         let queryBuilder = table.search(queryVector).limit(fetchLimit);
-
-        // 标准化排除 ID (解决 macOS NFC/NFD 问题)
         const normalizedExcludeId = excludeId ? excludeId.normalize('NFC') : null;
-
-        // 策略 A：数据库层过滤 (SQL Filtering)
-        // 这是一个“尽力而为”的优化
         if (normalizedExcludeId) {
-            // 防止 SQL 注入的简单转义
             const safeExcludeId = normalizedExcludeId.replace(/'/g, "''");
             queryBuilder = queryBuilder.where(`"noteId" != '${safeExcludeId}'`);
         }
 
-        // --- 3. 执行查询 ---
+        // 3. 执行查询
         const rawResults = await queryBuilder.toArray();
 
-        // --- 4. 深度清洗与过滤 ---
+        // 4. 深度清洗与过滤
         const uniqueResults = [];
         const seenNoteIds = new Set();
-
-        // 用于收集无效的幽灵 ID，搜索结束后批量删除
         const ghostIdsToDelete = new Set();
 
         for (const result of rawResults) {
             const currentId = result.noteId;
             const normalizedCurrentId = currentId.normalize('NFC');
 
-            // --- 过滤条件 1: ID 绝对匹配 ---
-            // 即使数据库 where 漏了，这里也要防守住
-            if (normalizedExcludeId && normalizedCurrentId === normalizedExcludeId) {
+            // 过滤条件 1: ID 绝对匹配
+            if (normalizedExcludeId && normalizedCurrentId === normalizedExcludeId) continue;
+
+            // 过滤条件 2: 幽灵数据检测 (使用正确的 notesDir)
+            const fullPath = path.join(notesDir, currentId);
+            if (!fs.existsSync(fullPath)) {
+                log.warn(`[Vector Service][${traceId}] 发现幽灵索引: ${currentId} (文件不存在于 ${notesDir})。标记为自动清理。`);
+                ghostIdsToDelete.add(currentId);
                 continue;
             }
 
-            // --- 过滤条件 2: 幽灵数据检测 (关键修复) ---
-            // 检查该 ID 对应的文件是否真的存在于磁盘上
-            // 解决问题：数据库里有 'note-OLD.md'，但磁盘上实际只有 'MyNote.md'
-            const fullPath = path.join(notesDir, currentId);
-            if (!fs.existsSync(fullPath)) {
-                log.warn(`[Vector Service][${traceId}] 发现幽灵索引: ${currentId} (文件不存在)。标记为自动清理。`);
-                ghostIdsToDelete.add(currentId);
-                continue; // 跳过此结果
-            }
-
-            // --- 过滤条件 3: 去重 ---
+            // 过滤条件 3: 去重
             if (seenNoteIds.has(normalizedCurrentId)) continue;
 
-            // --- 过滤条件 4: 相似度熔断 (关键修复) ---
-            // 如果 ID 不同，但相似度 > 99.5%，说明内容几乎完全一致。
-            // 这通常意味着这是一个改名残留的索引，或者完全一样的副本。
+            // 过滤条件 4: 相似度熔断
             const similarityRaw = 1 - result._distance;
             if (similarityRaw > 0.995) {
                 log.info(`[Vector Service][${traceId}] 排除过高相似度结果 (Sim: ${similarityRaw.toFixed(4)}), ID: ${currentId}`);
                 continue;
             }
 
-            // --- 通过所有检查，加入结果 ---
+            // 通过所有检查，加入结果
             seenNoteIds.add(normalizedCurrentId);
             uniqueResults.push({
                 id: currentId,
@@ -266,10 +255,9 @@ async function searchSimilarNotes(queryText, traceId, excludeId, targetLimit = 5
             if (uniqueResults.length >= targetLimit) break;
         }
 
-        // --- 5. 异步清理幽灵数据 ---
+        // 5. 异步清理幽灵数据
         if (ghostIdsToDelete.size > 0) {
-            // 不等待清理完成，直接返回结果，清理在后台进行
-            await (async () => {
+            (async () => {
                 for (const ghostId of ghostIdsToDelete) {
                     await deleteNoteIndex(ghostId);
                 }
@@ -278,7 +266,6 @@ async function searchSimilarNotes(queryText, traceId, excludeId, targetLimit = 5
         }
 
         log.info(`[Vector Service][${traceId}] 搜索完成。返回 ${uniqueResults.length} 条有效结果。`);
-
         return uniqueResults;
 
     } catch (error) {
