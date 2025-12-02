@@ -6,32 +6,38 @@ import { ref, computed } from 'vue'
 export const useUIStore = defineStore('ui', () => {
     // --- State ---
 
-    /**
-     * @type {import('vue').Ref<'system' | 'light' | 'dark'>}
-     * 用户的偏好设置。'system' 表示跟随操作系统。
-     * 这是我们需要持久化（保存）的状态。
-     */
     const themePreference = ref('system')
-
-    /**
-     * @type {import('vue').Ref<'light' | 'dark'>}
-     * 从 Electron 主进程获取到的当前操作系统的主题。
-     */
     const systemTheme = ref('light')
+    let unsubscribeThemeListener = null
 
     /**
-     * @type {Function | null}
-     * 用于取消 Electron 主题更新事件监听的函数。
+     * [原有] 撤销提示框 (Undo Toast) 的状态
+     * 专用于 "软删除 + 撤销" 场景
      */
-    let unsubscribeThemeListener = null
+    const toastState = ref({
+        visible: false,
+        message: '',
+        actionLabel: 'Undo',
+        actionPayload: null,
+        duration: 5000,
+        timerId: null
+    })
+
+    /**
+     * [新增] 通用通知 (Notification) 的状态
+     * 用于替代 alert()，显示成功、错误、警告等信息
+     * 类型: 'success' | 'error' | 'info' | 'warning'
+     */
+    const notificationState = ref({
+        visible: false,
+        message: '',
+        type: 'info',
+        duration: 3000,
+        timerId: null
+    })
 
     // --- Getters ---
 
-    /**
-     * 计算出最终应该应用的主题。
-     * 这是整个应用中唯一需要关心的主题状态。
-     * @returns {'light' | 'dark'}
-     */
     const effectiveTheme = computed(() => {
         if (themePreference.value === 'system') {
             return systemTheme.value
@@ -39,12 +45,8 @@ export const useUIStore = defineStore('ui', () => {
         return themePreference.value
     })
 
-    // --- Actions ---
+    // --- Actions: Theme ---
 
-    /**
-     * 设置用户的主题偏好，并将其保存到 localStorage。
-     * @param {'system' | 'light' | 'dark'} preference
-     */
     function setThemePreference(preference) {
         if (['system', 'light', 'dark'].includes(preference)) {
             themePreference.value = preference
@@ -52,40 +54,87 @@ export const useUIStore = defineStore('ui', () => {
         }
     }
 
-    /**
-     * 初始化主题逻辑。
-     * 这个函数应该在应用启动时（在 App.vue 中）调用一次。
-     * 它会：
-     * 1. 从 localStorage 加载用户之前的设置。
-     * 2. 获取并应用当前的系统主题。
-     * 3. 设置一个监听器，以便在系统主题变化时自动更新。
-     */
     async function initializeTheme() {
-        // 1. 从 localStorage 加载偏好
         const savedPreference = localStorage.getItem('theme-preference')
         if (savedPreference) {
             setThemePreference(savedPreference)
         }
 
-        // 2. 如果 Electron API 可用，则与主进程同步
         if (window.electronAPI) {
-            // 获取初始系统主题
             const initialSystemTheme = await window.electronAPI.getSystemTheme()
             systemTheme.value = initialSystemTheme
 
-            // 3. 监听系统主题的后续变化
-            if (unsubscribeThemeListener) {
-                unsubscribeThemeListener() // 清理旧的监听器
-            }
+            if (unsubscribeThemeListener) unsubscribeThemeListener()
             unsubscribeThemeListener = window.electronAPI.onThemeUpdate((newTheme) => {
                 systemTheme.value = newTheme
             })
         }
     }
 
+    // --- Actions: Undo Toast (Existing) ---
+
+    function showUndoToast(message, payload, duration = 5000) {
+        if (toastState.value.timerId) {
+            clearTimeout(toastState.value.timerId)
+        }
+        toastState.value = {
+            visible: true,
+            message,
+            actionLabel: 'Undo',
+            actionPayload: payload,
+            duration,
+            timerId: null
+        }
+    }
+
+    function hideToast() {
+        toastState.value.visible = false
+        setTimeout(() => {
+            if (!toastState.value.visible) {
+                toastState.value.actionPayload = null
+            }
+        }, 300)
+    }
+
+    // --- Actions: General Notification (New) ---
+
     /**
-     * 在应用卸载时清理监听器，防止内存泄漏。
+     * [新增] 显示通用通知
+     * @param {string} message - 通知内容
+     * @param {string} type - 'info', 'success', 'error', 'warning'
+     * @param {number} duration - 自动关闭时间 (ms)
      */
+    function showNotification(message, type = 'info', duration = 3000) {
+        // 清除上一个通知的定时器，防止冲突
+        if (notificationState.value.timerId) {
+            clearTimeout(notificationState.value.timerId)
+        }
+
+        // 设置新状态
+        notificationState.value = {
+            visible: true,
+            message,
+            type,
+            duration,
+            // 启动自动关闭定时器
+            timerId: setTimeout(() => {
+                hideNotification()
+            }, duration)
+        }
+    }
+
+    /**
+     * [新增] 隐藏通用通知
+     */
+    function hideNotification() {
+        notificationState.value.visible = false
+        // 清理定时器引用
+        if (notificationState.value.timerId) {
+            clearTimeout(notificationState.value.timerId)
+            notificationState.value.timerId = null
+        }
+    }
+
     function cleanup() {
         if (unsubscribeThemeListener) {
             unsubscribeThemeListener()
@@ -95,8 +144,17 @@ export const useUIStore = defineStore('ui', () => {
     return {
         themePreference,
         effectiveTheme,
+        // Toast State (Undo)
+        toastState,
+        // Notification State (General)
+        notificationState,
         setThemePreference,
         initializeTheme,
+        // Actions
+        showUndoToast,
+        hideToast,
+        showNotification, // 导出新 action
+        hideNotification, // 导出新 action
         cleanup
     }
 })

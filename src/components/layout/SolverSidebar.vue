@@ -113,6 +113,8 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSolverStore } from '@/stores/solverStore'
 import { useNoteStore } from '@/stores/noteStore'
+// [新增] 引入 UI Store
+import { useUIStore } from '@/stores/uiStore'
 import { renderMarkdown } from '@/utils/markdownRenderer'
 import {
   Send as SendIcon,
@@ -126,6 +128,7 @@ defineEmits(['close'])
 
 const solverStore = useSolverStore()
 const noteStore = useNoteStore()
+const uiStore = useUIStore() // [新增]
 const route = useRoute()
 
 const chatInput = ref('')
@@ -170,27 +173,21 @@ watch(() => [solverStore.chatHistory.length, solverStore.streamingText], async (
   }
 }, { deep: true })
 
-/**
- * [核心修复] 发送消息的逻辑现在位于组件内部。
- * 它负责判断当前上下文，并将其作为参数传递给 store action。
- */
 const sendMessage = () => {
   const text = chatInput.value.trim()
   if (!text || solverStore.isThinking) return
 
   // 1. 确定上下文内容
   let contextContent = null;
-  // 如果在单个笔记页面 (`/notes/...`)
   if (route.name === 'note-view' && route.params.noteId) {
     const currentNote = noteStore.getNoteById(route.params.noteId);
     contextContent = currentNote ? currentNote.content : null;
   }
-  // 如果在主页 (`/`)
   else if (route.name === 'home') {
     contextContent = solverStore.draftContext;
   }
 
-  // 2. 调用 store action，并传入上下文
+  // 2. 调用 store action
   solverStore.sendMessage(text, contextContent);
 
   // 3. 清理输入框
@@ -205,6 +202,7 @@ const handleSwitchToChat = () => {
 const handleCopyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text)
+    // [可选优化] 这里也可以加上 uiStore.showNotification('Copied!', 'success')
   } catch (err) {
     console.error('Failed to copy:', err)
   }
@@ -212,19 +210,19 @@ const handleCopyToClipboard = async (text) => {
 
 const handleInsertIntoNote = (text) => {
   if (route.name === 'note-view' && route.params.noteId) {
-    // 这是一个待实现的功能：需要一种方式通知 SingleNoteView 更新其 localContent
-    // noteStore.insertTextIntoNote(text) // 假设 noteStore 有一个 action 可以触发事件
-    alert("Insertion feature is under development!");
+    // [修改] 使用 Toast 替代 alert
+    uiStore.showNotification('Insertion feature is under development!', 'info');
   } else if (route.name === 'home') {
     const currentDraft = solverStore.draftContext;
     solverStore.setDraftContext(currentDraft + `\n\n${text}`);
+    uiStore.showNotification('Inserted into draft', 'success'); // 顺便加个成功提示
   }
 }
 
 </script>
 
 <style lang="scss" scoped>
-/* 主题变量 (用于错误提示框) */
+/* 样式保持不变... */
 :root {
   --color-danger-bg: #FEF2F2;
   --color-danger-border: #FCA5A5;

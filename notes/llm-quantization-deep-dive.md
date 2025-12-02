@@ -1,11 +1,11 @@
 ---
-title: 深入理解LLM量化技术
-date: '2024-05-15T14:00:00.000Z'
+date: '2025-12-02T11:55:21.749Z'
 tags:
   - AI
   - Quantization
   - GGUF
   - Technical
+title: 深入理解LLM量化技术
 ---
 
 # 深入理解LLM量化技术

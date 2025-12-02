@@ -7,6 +7,9 @@
     </div>
 
     <!-- 状态二: 笔记未找到 -->
+    <!-- [解释] 当笔记被软删除时，getNoteById 会返回 undefined，这里会显示 Not Found -->
+    <!-- 但由于我们在 requestDeleteNote 中已经做了路由跳转回首页的处理， -->
+    <!-- 正常情况下用户不会在这里停留太久看到这个界面，除非路由跳转有延迟。 -->
     <div v-else-if="!note" class="state-container empty">
       <p class="error-title">:( Note Not Found</p>
       <p>Could not find note with ID "{{ noteId }}".</p>
@@ -29,7 +32,8 @@
               <Edit3Icon class="icon" />
               <span>Edit</span>
             </button>
-            <button class="action-btn danger" @click="handleDelete" title="Delete note">
+            <!-- [修改] 删除按钮调用新的处理函数 -->
+            <button class="action-btn danger" @click="handleRequestDelete" title="Delete note">
               <Trash2Icon class="icon" />
               <span>Delete</span>
             </button>
@@ -94,15 +98,11 @@ const route = useRoute();
 const isLoading = ref(true);
 const isEditing = ref(false);
 
-// [核心修复] 将本地 ref 更改为 computed 属性。
-// 这确保了 `note` 始终是对 store 中最新数据的响应式引用。
-// 当 store 的 `_allNotesCache` 在保存后被刷新时，这个 computed 属性会
-// 自动重新计算，获取到更新后的笔记对象，从而触发 UI 更新。
+// [核心] computed 属性自动响应 Store 变化 (包括软删除导致的消失)
 const note = computed(() => noteStore.getNoteById(props.noteId));
 
 // --- 计算属性 ---
 const formattedTimestamp = computed(() => {
-  // 使用 .value 是因为 note 是一个 computed ref
   if (!note.value?.timestamp) return '';
   return dayjs(note.value.timestamp).format('MMM D, YYYY HH:mm');
 });
@@ -119,10 +119,6 @@ const loadNote = async () => {
     await noteStore.fetchNotes();
   }
 
-  // [代码简化] 不再需要手动赋值给本地 ref。
-  // computed 属性会自动从 store 获取数据。
-
-  // 检查 note (现在是 computed) 是否有效
   if (note.value) {
     solverStore.analyzeContext(note.value.id);
     noteStore.selectNote(note.value.id);
@@ -152,29 +148,17 @@ const handleUpdateAndExit = async (payload) => {
     content: payload.content,
     tags: payload.tags
   });
-
-  // 保存后，store 会刷新数据，computed 属性会自动更新，
-  // 我们只需切换回预览模式，UI 就会显示最新的内容。
   isEditing.value = false;
 };
 
-const handleDelete = async () => {
+/**
+ * [核心重构] 请求删除 (软删除)
+ * 移除了 confirm() 对话框。
+ * 调用 store 方法后，store 会负责处理路由跳转(回主页)和 Toast 显示。
+ */
+const handleRequestDelete = () => {
   if (!note.value) return;
-  // [修改点] 确认信息改为英文
-  if (!confirm(`Are you sure you want to delete note "${note.value.title || note.value.id}"?`)) return;
-
-  const allNotes = noteStore._allNotesCache;
-  const currentIndex = allNotes.findIndex(n => n.id === note.value.id);
-  await noteStore.deleteNote(note.value.id);
-
-  const newNotes = noteStore._allNotesCache;
-  if (newNotes.length === 0) {
-    router.push('/');
-  } else {
-    const nextIndex = Math.min(currentIndex, newNotes.length - 1);
-    const nextNoteId = newNotes[nextIndex].id;
-    router.push({ name: 'note-view', params: { noteId: nextNoteId } });
-  }
+  noteStore.requestDeleteNote(note.value.id);
 };
 
 // --- 侦听器 ---
@@ -189,6 +173,7 @@ watch(() => props.noteId, (newId, oldId) => {
 </script>
 
 <style lang="scss" scoped>
+/* 样式保持不变 */
 .single-note-view {
   height: 100%;
   width: 100%;

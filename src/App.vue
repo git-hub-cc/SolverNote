@@ -25,6 +25,13 @@
     <div class="sidebar-wrapper" :class="{ 'is-collapsed': !isSidebarOpen }">
       <SolverSidebar class="layout-sidebar" @close="isSidebarOpen = false" />
     </div>
+
+    <!-- [原有] 全局撤销提示框组件 (位于右下角) -->
+    <UndoToast />
+
+    <!-- [新增] 全局通用通知组件 (位于顶部居中) -->
+    <NotificationToast />
+
   </div>
 </template>
 
@@ -33,6 +40,9 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import NavigationRail from '@/components/layout/NavigationRail.vue'
 import SolverSidebar from '@/components/layout/SolverSidebar.vue'
+import UndoToast from '@/components/common/UndoToast.vue'
+// [新增] 引入通用通知组件
+import NotificationToast from '@/components/common/NotificationToast.vue'
 import { useSolverStore } from '@/stores/solverStore'
 import { useUIStore } from '@/stores/uiStore'
 import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next'
@@ -40,38 +50,23 @@ import { PanelRightOpen as PanelRightOpenIcon } from 'lucide-vue-next'
 // --- 状态管理 ---
 const solverStore = useSolverStore()
 const uiStore = useUIStore()
-const route = useRoute() // 获取当前路由信息
+const route = useRoute()
 
 // 响应式状态：控制右侧 AI 侧边栏的展开/折叠
 const isSidebarOpen = ref(true)
 
 // --- 方法 ---
-
-/**
- * 切换 AI 侧边栏的显示状态。
- */
 const toggleSidebar = () => {
   isSidebarOpen.value = !isSidebarOpen.value
 }
 
 // --- 侦听器 (Watchers) ---
-
-/**
- * [鲁棒性设计] 路由驱动的侧边栏行为。
- * 当用户通过文件树或卡片导航到单个笔记页面时，自动展开 AI 侧边栏，
- * 以便立即展示与该笔记相关的上下文信息。
- */
 watch(() => route.name, (routeName) => {
   if (routeName === 'note-view') {
     isSidebarOpen.value = true
   }
 });
 
-/**
- * 侦听 UI Store 中计算出的最终主题 ('light' 或 'dark')。
- * 当主题变化时，动态地为 <html> 根元素添加或移除 'dark' 类，
- * 从而触发全局 CSS 变量的变化，实现无刷新主题切换。
- */
 watch(() => uiStore.effectiveTheme, (newTheme) => {
   const root = document.documentElement;
   if (newTheme === 'dark') {
@@ -79,45 +74,27 @@ watch(() => uiStore.effectiveTheme, (newTheme) => {
   } else {
     root.classList.remove('dark');
   }
-}, {
-  immediate: true // 立即执行一次，确保初始加载时主题正确
-});
+}, { immediate: true });
 
-/**
- * 侦听用户的主题偏好设置 ('system', 'light', 'dark')。
- * 当用户更改偏好时，通过 Electron API 通知主进程，
- * 以便主进程可以相应地调整原生窗口的主题（例如标题栏）。
- */
 watch(() => uiStore.themePreference, (newPreference) => {
   if (window.electronAPI && window.electronAPI.setNativeTheme) {
     window.electronAPI.setNativeTheme(newPreference);
   }
-}, {
-  immediate: true // 立即执行一次
-});
+}, { immediate: true });
 
 // --- 生命周期钩子 ---
-
 onMounted(async () => {
-  // 组件挂载后，初始化所有需要的监听器
-  solverStore.setupListeners(); // 设置 AI 相关的 IPC 监听
-  uiStore.initializeTheme();    // 初始化主题管理
+  solverStore.setupListeners();
+  uiStore.initializeTheme();
 })
 
 onUnmounted(() => {
-  // 组件卸载前，清理所有监听器，防止内存泄漏
   solverStore.cleanupListeners();
   uiStore.cleanup();
 })
 </script>
 
 <style scoped>
-/*
- * 整体三栏布局样式
- * - display: flex; 建立 flex 容器
- * - height: 100vh; width: 100vw; 占满整个视口
- * - overflow: hidden; 防止出现不必要的滚动条
- */
 .app-layout {
   display: flex;
   height: 100vh;
@@ -125,55 +102,44 @@ onUnmounted(() => {
   overflow: hidden;
   background-color: var(--bg-app);
   color: var(--text-primary);
+  position: relative;
 }
 
-/* 左侧导航栏样式 */
 .layout-nav {
-  flex-shrink: 0; /* 防止被压缩 */
+  flex-shrink: 0;
   width: 240px;
   border-right: 1px solid var(--border-light);
   z-index: 10;
   background-color: var(--bg-sidebar);
 }
 
-/* 中间主内容区样式 */
 .layout-main {
-  flex: 1; /* 占据所有剩余空间 */
+  flex: 1;
   position: relative;
   display: flex;
   flex-direction: column;
-  /*
-   * [核心修改] 为主内容区设置最小宽度。
-   * 这是为了防止在窗口宽度非常窄时，主内容区域被 flex 布局完全压缩，
-   * 导致内容无法阅读。200px 是一个比较合理的最小宽度值。
-   * 此修改具有良好的鲁棒性和最小侵入性，仅影响布局约束。
-   */
   min-width: 200px;
 }
 
-/* 右侧 AI 侧边栏的包裹容器样式 */
 .sidebar-wrapper {
-  flex-shrink: 0; /* 防止被压缩 */
+  flex-shrink: 0;
   width: 320px;
   overflow: hidden;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* 平滑的宽度变化动画 */
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border-left: 1px solid var(--border-light);
   background-color: var(--bg-card);
 }
 
-/* 当侧边栏折叠时的样式 */
 .sidebar-wrapper.is-collapsed {
   width: 0;
-  border-left-color: transparent; /* 隐藏边框 */
+  border-left-color: transparent;
 }
 
-/* 侧边栏内部组件的样式 */
 .layout-sidebar {
-  width: 320px; /* 确保内部组件宽度与外部容器一致 */
+  width: 320px;
   height: 100%;
 }
 
-/* 侧边栏展开/折叠按钮样式 */
 .sidebar-toggle-btn {
   position: absolute;
   top: 16px;
@@ -199,7 +165,6 @@ onUnmounted(() => {
   border-color: var(--border-hover);
 }
 
-/* 渐变过渡效果 */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;

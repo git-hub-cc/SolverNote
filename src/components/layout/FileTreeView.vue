@@ -22,9 +22,12 @@
       <div v-if="isLoading" class="loading-state">Loading...</div>
 
       <template v-else>
-        <!-- 递归渲染所有根节点 -->
+        <!--
+          [核心修改] 使用 visibleFileTree 而不是 treeData
+          visibleFileTree 在 store 中通过 getter 实现，自动过滤掉了处于软删除状态的节点
+        -->
         <FileTreeItem
-            v-for="node in treeData"
+            v-for="node in visibleTreeData"
             :key="node.id"
             :item="node"
             @context-menu="openContextMenu"
@@ -32,7 +35,7 @@
         />
 
         <!-- 空白提示 -->
-        <div v-if="treeData.length === 0" class="empty-state">
+        <div v-if="visibleTreeData.length === 0" class="empty-state">
           No files yet.
         </div>
       </template>
@@ -56,7 +59,8 @@
       </template>
 
       <div class="menu-item" @click="handleRename(contextMenu.targetId)">Rename</div>
-      <div class="menu-item danger" @click="handleDelete(contextMenu.targetId)">Delete</div>
+      <!-- [修改] 删除操作不再是 danger 颜色，因为现在可以撤销了，显得更温和 -->
+      <div class="menu-item" @click="handleDelete(contextMenu.targetId)">Delete</div>
     </div>
 
     <!-- 全局点击遮罩，用于关闭右键菜单 -->
@@ -67,7 +71,7 @@
         @contextmenu.prevent="closeContextMenu"
     ></div>
 
-    <!-- [修复] 自定义输入弹窗 (替代 prompt) -->
+    <!-- 自定义输入弹窗 (替代 prompt) -->
     <div v-if="inputDialog.visible" class="modal-overlay" @click.self="closeInputDialog">
       <div class="modal-card">
         <h3 class="modal-title">{{ inputDialog.title }}</h3>
@@ -99,7 +103,9 @@ const noteStore = useNoteStore();
 
 // --- 状态 ---
 const isLoading = ref(false);
-const treeData = computed(() => noteStore.fileTree);
+
+// [核心修改] 改为使用 visibleFileTree getter，它排除了 pendingDeletions
+const visibleTreeData = computed(() => noteStore.visibleFileTree);
 
 const contextMenu = ref({
   visible: false,
@@ -110,12 +116,12 @@ const contextMenu = ref({
   targetName: ''
 });
 
-// [修复] 输入框弹窗状态
+// 输入框弹窗状态
 const inputDialog = reactive({
   visible: false,
   title: '',
   value: '',
-  resolve: null // Promise resolve function
+  resolve: null
 });
 const dialogInputRef = ref(null);
 
@@ -147,7 +153,7 @@ const closeContextMenu = () => {
   contextMenu.value.visible = false;
 };
 
-// --- [修复] 自定义弹窗逻辑 ---
+// --- 自定义弹窗逻辑 ---
 
 const openInputDialog = (title, initialValue = '') => {
   return new Promise((resolve) => {
@@ -156,7 +162,6 @@ const openInputDialog = (title, initialValue = '') => {
     inputDialog.visible = true;
     inputDialog.resolve = resolve;
 
-    // 自动聚焦输入框
     nextTick(() => {
       if (dialogInputRef.value) {
         dialogInputRef.value.focus();
@@ -168,7 +173,7 @@ const openInputDialog = (title, initialValue = '') => {
 
 const closeInputDialog = () => {
   inputDialog.visible = false;
-  if (inputDialog.resolve) inputDialog.resolve(null); // 返回 null 表示取消
+  if (inputDialog.resolve) inputDialog.resolve(null);
 };
 
 const submitInputDialog = () => {
@@ -180,15 +185,12 @@ const submitInputDialog = () => {
 
 const handleCreateFile = async (parentPath) => {
   closeContextMenu();
-  // 调用 store action 创建新笔记并定位 (自动生成名字，无需弹窗)
   await noteStore.createNoteInFolder(parentPath);
 };
 
 const handleCreateFolder = async (parentPath) => {
   closeContextMenu();
-  // [修复] 使用自定义弹窗替代 prompt
   const name = await openInputDialog("Enter folder name:");
-
   if (name) {
     const fullPath = parentPath ? `${parentPath}/${name}` : name;
     await noteStore.createFolder(fullPath);
@@ -197,30 +199,27 @@ const handleCreateFolder = async (parentPath) => {
 
 const handleRename = async (oldPath) => {
   closeContextMenu();
-  // 简单起见，从完整路径中提取旧文件名
   const oldName = oldPath.split('/').pop();
-
-  // [修复] 使用自定义弹窗替代 prompt
   const newName = await openInputDialog("Rename to:", oldName);
 
   if (newName && newName !== oldName) {
-    // 构造新路径 (替换最后一段)
     const pathParts = oldPath.split('/');
     pathParts.pop();
     pathParts.push(newName);
     const newPath = pathParts.join('/');
-
     await noteStore.renamePath(oldPath, newPath);
   }
 };
 
+/**
+ * [核心重构] 处理删除
+ * 移除 confirm()，改为 requestDeleteNote (软删除)
+ */
 const handleDelete = async (id) => {
   closeContextMenu();
-  // 删除仍然使用 confirm，因为它是原生支持的，除非你想做的更漂亮也可以换成弹窗
-  if (confirm("Delete this item?")) {
-    await noteStore.deleteNote(id);
-    await loadTree();
-  }
+  // 文件夹删除时，可能需要更谨慎。目前的软删除逻辑对文件夹也有效，
+  // requestDeleteNote 接收 ID，如果是文件夹 ID，整个文件夹会消失并进入倒计时。
+  noteStore.requestDeleteNote(id);
 };
 
 // --- 拖拽处理 ---
@@ -229,11 +228,9 @@ const handleMoveItem = async ({ sourceId, targetDir }) => {
   await noteStore.movePath(sourceId, targetDir);
 };
 
-// 拖到根目录空白处
 const handleRootDrop = async (e) => {
   try {
     const data = JSON.parse(e.dataTransfer.getData('application/json'));
-    // 目标设为 null 或 '' 表示根目录
     await noteStore.movePath(data.id, '');
   } catch (err) {
     // ignore
@@ -242,6 +239,7 @@ const handleRootDrop = async (e) => {
 </script>
 
 <style lang="scss" scoped>
+/* 样式保持不变 */
 .file-tree-view {
   display: flex;
   flex-direction: column;
@@ -339,7 +337,7 @@ const handleRootDrop = async (e) => {
   margin: 4px 0;
 }
 
-/* [修复] 模态窗样式 */
+/* 模态窗样式 */
 .modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;

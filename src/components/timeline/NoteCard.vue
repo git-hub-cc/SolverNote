@@ -32,7 +32,12 @@
         <button class="action-btn" @click="handleEdit" title="Edit this note">
           <Edit2Icon class="icon-xs" />
         </button>
-        <button class="action-btn danger" @click="$emit('delete', note.id)" title="Delete">
+        <!--
+           [核心重构] 删除逻辑修改
+           不再触发 emit('delete') 让父组件处理，而是直接在组件内调用 store 的 requestDeleteNote。
+           这样所有删除行为统一，且支持撤销。
+        -->
+        <button class="action-btn danger" @click="handleRequestDelete" title="Delete">
           <Trash2Icon class="icon-xs" />
         </button>
       </div>
@@ -46,7 +51,8 @@
 
 <script setup>
 import { computed } from 'vue';
-import { useRouter } from 'vue-router'; // 引入 useRouter
+import { useRouter } from 'vue-router';
+import { useNoteStore } from '@/stores/noteStore'; // 引入 Store
 import dayjs from 'dayjs';
 import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next';
 import { renderMarkdown } from '@/utils/markdownRenderer';
@@ -59,10 +65,11 @@ const props = defineProps({
   isSelected: Boolean
 });
 
-// [核心重构] 不再需要 'edit' 事件，因为导航是组件内部的行为
-defineEmits(['delete']);
+// [核心重构] 移除 'delete' 事件，不再需要在父组件处理
+// defineEmits(['delete']);
 
-const router = useRouter(); // 实例化 router
+const router = useRouter();
+const noteStore = useNoteStore(); // 实例化 Store
 
 const formattedTime = computed(() => {
   return dayjs(props.note.timestamp).format('MMM D, HH:mm');
@@ -78,8 +85,8 @@ const renderedContent = computed(() => {
  */
 const navigateToNote = () => {
   router.push({
-    name: 'note-view', // 导航到命名路由 'note-view'
-    params: { noteId: props.note.id } // 传递笔记ID作为路由参数
+    name: 'note-view',
+    params: { noteId: props.note.id }
   });
 };
 
@@ -91,13 +98,22 @@ const handleEdit = () => {
   router.push({
     name: 'note-view',
     params: { noteId: props.note.id },
-    query: { edit: 'true' } // 附加查询参数，通知目标页面直接进入编辑状态
+    query: { edit: 'true' }
   });
+};
+
+/**
+ * [核心重构] 请求删除笔记（软删除）
+ * 点击后 UI 会立即移除该卡片，并显示撤销 Toast。
+ */
+const handleRequestDelete = () => {
+  noteStore.requestDeleteNote(props.note.id);
 };
 
 </script>
 
 <style lang="scss" scoped>
+/* 样式保持不变，此处省略以节省空间，直接使用之前提供的 NoteCard 样式即可 */
 .note-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -105,7 +121,7 @@ const handleEdit = () => {
   padding: 16px 20px;
   margin-bottom: 16px;
   transition: all 0.2s;
-  cursor: pointer; /* 将光标改为 pointer，提示用户这是一个可点击的链接 */
+  cursor: pointer;
 
   &:hover {
     border-color: var(--border-hover);
@@ -115,7 +131,6 @@ const handleEdit = () => {
     }
   }
 
-  /* is-selected 样式用于视觉反馈，表示“这是当前URL对应的笔记” */
   &.is-selected {
     border-color: var(--color-brand);
     box-shadow: 0 0 0 1px var(--color-brand-light);

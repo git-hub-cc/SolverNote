@@ -1,9 +1,7 @@
 <template>
   <div class="stream-timeline">
     <!--
-      [核心重构] 顶部的 SmartEditor 现在只用于“创建新笔记”。
-      所有与编辑模式相关的 props (:is-edit-mode, :initial-content) 都已被移除。
-      它是一个纯粹的输入框，用于捕获用户的即时想法。
+      顶部的 SmartEditor 现在只用于“创建新笔记”。
     -->
     <div class="input-area-wrapper">
       <SmartEditor
@@ -44,7 +42,7 @@
       <!-- 笔记列表 -->
       <div v-else class="notes-list">
         <!--
-          NoteCard 的 @edit 事件已被移除，因为它现在通过 vue-router 自行处理导航。
+          NoteCard 的删除事件已被移除，因为它现在通过 vue-router 自行处理导航。
           我们只需要监听 @delete 事件。
         -->
         <NoteCard
@@ -116,7 +114,7 @@ const handleBackgroundClick = () => {
 };
 
 /**
- * [核心重构] 处理“创建新笔记”的保存事件。
+ * 处理“创建新笔记”的保存事件。
  * @param {object} payload - 从 SmartEditor 发出的包含 content 和 tags 的对象。
  */
 const handleSaveNewNote = async (payload) => {
@@ -133,12 +131,9 @@ const handleSaveNewNote = async (payload) => {
  * @param {string} id - 要删除的笔记 ID。
  */
 const handleDelete = async (id) => {
-  // 弹出确认框，增强鲁棒性
-  const noteToDelete = noteStore.getNoteById(id);
-  // [修改点] 确认信息改为英文
-  if (noteToDelete && confirm(`Are you sure you want to delete note "${noteToDelete.title || noteToDelete.id}"?`)) {
-    await noteStore.deleteNote(id);
-  }
+  // [修改] 移除 confirm() 确认框，直接调用 store 的删除方法
+  // 因为 store 内部实现了"软删除 + 撤销"逻辑，这是更现代的交互方式。
+  await noteStore.requestDeleteNote(id);
 };
 </script>
 
@@ -157,7 +152,7 @@ const handleDelete = async (id) => {
 .input-area-wrapper {
   padding: 24px 10%; /* 上下内边距24px，左右10%以居中 */
   flex-shrink: 0; /* 防止该区域在 flex 布局中被压缩 */
-  z-index: 10; /* 确保在滚动时可能位于其他元素之上 */
+  z-index: 9; /* 确保在滚动时可能位于其他元素之上 */
   background-color: var(--bg-app); /* 使用应用背景色变量 */
 }
 

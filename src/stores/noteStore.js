@@ -1,5 +1,8 @@
+// src/stores/noteStore.js
+
 import { defineStore } from 'pinia'
 import router from '@/router'
+import { useUIStore } from './uiStore' // 引入 UI Store 用于显示 Toast
 
 // 模拟数据 (开发回退)
 const MOCK_NOTES = [
@@ -14,38 +17,42 @@ const MOCK_NOTES = [
 
 export const useNoteStore = defineStore('notes', {
     state: () => ({
-        /**
-         * 扁平笔记列表（用于搜索和内容展示）
-         */
         _allNotesCache: [],
-
-        /**
-         * [Phase 2 新增] 完整的文件树结构
-         */
         fileTree: [],
-
         loading: false,
         error: null,
         searchQuery: '',
         isSyncing: false,
-
         selectedNoteId: null,
         scrollToNoteId: null,
+        _listeners: [],
 
-        _listeners: []
+        /**
+         * 待删除队列
+         * 存储结构: { [noteId]: timerId }
+         * 用于追踪哪些笔记处于"软删除"状态（5秒反悔期）
+         */
+        pendingDeletions: {}
     }),
 
     getters: {
         getNoteById: (state) => {
-            return (id) => state._allNotesCache.find(note => note.id === id);
+            return (id) => {
+                // 如果笔记在待删除队列中，视为已不存在
+                if (state.pendingDeletions[id]) return undefined;
+                return state._allNotesCache.find(note => note.id === id);
+            }
         },
 
         notes: (state) => {
+            // 过滤掉处于待删除状态的笔记
+            const visibleNotes = state._allNotesCache.filter(n => !state.pendingDeletions[n.id]);
+
             if (!state.searchQuery || state.searchQuery.trim() === '') {
-                return state._allNotesCache;
+                return visibleNotes;
             }
             const lowerQuery = state.searchQuery.toLowerCase().trim();
-            return state._allNotesCache.filter(note => {
+            return visibleNotes.filter(note => {
                 const inTitle = note.title && note.title.toLowerCase().includes(lowerQuery);
                 const inId = note.id.toLowerCase().includes(lowerQuery);
                 const inContent = note.content.toLowerCase().includes(lowerQuery);
@@ -56,17 +63,35 @@ export const useNoteStore = defineStore('notes', {
 
         allTags: (state) => {
             const tagMap = new Map();
-            state._allNotesCache.forEach(note => {
-                if (note.tags && Array.isArray(note.tags)) {
-                    note.tags.forEach(tag => {
-                        if (typeof tag !== 'string' || !tag.trim()) return;
-                        tagMap.set(tag.trim(), (tagMap.get(tag.trim()) || 0) + 1);
-                    });
-                }
-            });
+            state._allNotesCache
+                .filter(n => !state.pendingDeletions[n.id])
+                .forEach(note => {
+                    if (note.tags && Array.isArray(note.tags)) {
+                        note.tags.forEach(tag => {
+                            if (typeof tag !== 'string' || !tag.trim()) return;
+                            tagMap.set(tag.trim(), (tagMap.get(tag.trim()) || 0) + 1);
+                        });
+                    }
+                });
             return Array.from(tagMap.entries())
                 .map(([name, count]) => ({ name, count }))
                 .sort((a, b) => b.count - a.count);
+        },
+
+        /**
+         * 可见的文件树
+         * 递归过滤掉待删除的文件或文件夹
+         */
+        visibleFileTree: (state) => {
+            const filterTree = (nodes) => {
+                return nodes
+                    .filter(node => !state.pendingDeletions[node.id]) // 过滤自身
+                    .map(node => ({
+                        ...node,
+                        children: node.children ? filterTree(node.children) : [] // 递归过滤子节点
+                    }));
+            };
+            return filterTree(state.fileTree);
         }
     },
 
@@ -77,7 +102,7 @@ export const useNoteStore = defineStore('notes', {
                 const unsubscribe = window.electronAPI.onNotesUpdated(() => {
                     console.log('[Store] Notes updated externally, reloading...');
                     this.fetchNotes();
-                    this.fetchFileTree(); // 同时刷新树
+                    this.fetchFileTree();
                 });
                 this._listeners.push(unsubscribe);
             }
@@ -107,9 +132,6 @@ export const useNoteStore = defineStore('notes', {
             }
         },
 
-        /**
-         * [Phase 2 新增] 获取文件树
-         */
         async fetchFileTree() {
             try {
                 if (window.electronAPI) {
@@ -121,9 +143,6 @@ export const useNoteStore = defineStore('notes', {
             }
         },
 
-        /**
-         * [辅助] 对树进行排序：文件夹在前，文件名 A-Z
-         */
         sortTree(nodes) {
             if (!nodes) return [];
             return nodes.map(node => ({
@@ -147,7 +166,7 @@ export const useNoteStore = defineStore('notes', {
 
                     if (result.success) {
                         await this.fetchNotes();
-                        await this.fetchFileTree(); // 保存新文件后刷新树
+                        await this.fetchFileTree();
                     } else {
                         throw new Error(result.error);
                     }
@@ -155,82 +174,129 @@ export const useNoteStore = defineStore('notes', {
             } catch (err) {
                 console.error('Save failed:', err);
                 this.error = 'Failed to save note';
+                // [新增] 显示错误通知
+                const uiStore = useUIStore();
+                uiStore.showNotification('Failed to save note', 'error');
             } finally {
                 this.isSyncing = false;
             }
         },
 
-        async deleteNote(id) {
+        // --- 删除逻辑 ---
+
+        async requestDeleteNote(id) {
             if (!id) return;
+
+            // 1. 如果该文件已经在等待删除中，先取消旧的定时器（防抖）
+            if (this.pendingDeletions[id]) {
+                clearTimeout(this.pendingDeletions[id]);
+            }
+
+            // 2. 启动真正的删除定时器
+            const timerId = setTimeout(() => {
+                this._confirmDelete(id); // 5秒后执行真删除
+            }, 5000); // 5秒倒计时
+
+            // 3. 更新状态，UI 立即隐藏该项
+            this.pendingDeletions = {
+                ...this.pendingDeletions,
+                [id]: timerId
+            };
+
+            // 4. 处理选中状态
+            if (this.selectedNoteId === id) {
+                this.selectedNoteId = null;
+                if (router.currentRoute.value.name === 'note-view') {
+                    router.push('/');
+                }
+            }
+
+            // 5. 显示撤销提示框 (Undo Toast)
+            const uiStore = useUIStore();
+            const noteName = id.split('/').pop() || 'Item';
+            uiStore.showUndoToast(`Deleted "${noteName}"`, id, 5000);
+        },
+
+        undoDelete(id) {
+            const timerId = this.pendingDeletions[id];
+            if (timerId) {
+                // 1. 阻止真删除
+                clearTimeout(timerId);
+
+                // 2. 从待删除队列中移除，UI 会立即重新渲染出该笔记
+                const newPending = { ...this.pendingDeletions };
+                delete newPending[id];
+                this.pendingDeletions = newPending;
+
+                // 3. 关闭提示框
+                const uiStore = useUIStore();
+                uiStore.hideToast();
+            }
+        },
+
+        async _confirmDelete(id) {
+            console.log(`[Store] Executing hard delete for: ${id}`);
             this.isSyncing = true;
+
+            const newPending = { ...this.pendingDeletions };
+            delete newPending[id];
+            this.pendingDeletions = newPending;
+
             try {
                 if (window.electronAPI) {
                     const result = await window.electronAPI.deleteNote(id);
                     if (!result.success) throw new Error(result.error);
                 }
 
-                // 乐观 UI 更新
+                // 乐观更新
                 const index = this._allNotesCache.findIndex(n => n.id === id);
                 if (index > -1) this._allNotesCache.splice(index, 1);
-                if (this.selectedNoteId === id) {
-                    this.selectedNoteId = null;
-                    router.push('/'); // 如果删除了当前查看的笔记，回主页
-                }
 
-                await this.fetchFileTree(); // 刷新树
+                // 刷新树结构
+                await this.fetchFileTree();
+
             } catch (err) {
-                console.error('Delete failed:', err);
-                this.error = err.message;
+                console.error('Hard delete failed:', err);
+                this.error = `Failed to delete: ${err.message}`;
+                // [新增] 删除失败通知
+                const uiStore = useUIStore();
+                uiStore.showNotification(`Delete failed: ${err.message}`, 'error');
             } finally {
                 this.isSyncing = false;
             }
         },
 
-        // --- 文件操作 Actions ---
+        async deleteNote(id) {
+            return this.requestDeleteNote(id);
+        },
 
-        /**
-         * [Phase 2 新增] 在指定文件夹下创建新笔记
-         */
+        // --- 文件操作 ---
+
         async createNoteInFolder(parentPath) {
             const defaultName = `Untitled-${Date.now()}.md`;
-            // 如果有父目录，拼接路径；否则直接用文件名
             const id = parentPath ? `${parentPath}/${defaultName}` : defaultName;
-
-            // 构造一个空的笔记对象
-            const newNote = {
-                id: id,
-                content: '# New Note\nStart writing...',
-                tags: []
-            };
-
+            const newNote = { id: id, content: '# New Note\nStart writing...', tags: [] };
             await this.saveNote(newNote);
-
-            // 导航到新笔记
             router.push({ name: 'note-view', params: { noteId: id } });
         },
 
-        /**
-         * [Phase 2 新增] 创建文件夹
-         */
         async createFolder(path) {
             if (window.electronAPI) {
                 const res = await window.electronAPI.createFolder(path);
                 if (res.success) {
                     await this.fetchFileTree();
                 } else {
-                    alert('Failed to create folder: ' + res.error);
+                    // [修改] 使用 Toast 替代 alert
+                    const uiStore = useUIStore();
+                    uiStore.showNotification('Failed to create folder: ' + res.error, 'error');
                 }
             }
         },
 
-        /**
-         * [Phase 2 新增] 重命名
-         */
         async renamePath(oldPath, newPath) {
             if (window.electronAPI) {
                 const res = await window.electronAPI.renamePath(oldPath, newPath);
                 if (res.success) {
-                    // 如果重命名的是当前打开的笔记，需要更新路由
                     if (this.selectedNoteId === oldPath) {
                         this.selectedNoteId = newPath;
                         router.replace({ name: 'note-view', params: { noteId: newPath } });
@@ -238,30 +304,28 @@ export const useNoteStore = defineStore('notes', {
                     await this.fetchNotes();
                     await this.fetchFileTree();
                 } else {
-                    alert('Rename failed: ' + res.error);
+                    // [修改] 使用 Toast 替代 alert
+                    const uiStore = useUIStore();
+                    uiStore.showNotification('Rename failed: ' + res.error, 'error');
                 }
             }
         },
 
-        /**
-         * [Phase 2 新增] 移动文件
-         */
         async movePath(sourceId, targetDir) {
             if (window.electronAPI) {
                 const res = await window.electronAPI.movePath(sourceId, targetDir);
                 if (res.success) {
                     await this.fetchNotes();
                     await this.fetchFileTree();
-
-                    // 计算新 ID 并在需要时跳转
                     const fileName = sourceId.split('/').pop();
                     const newId = targetDir ? `${targetDir}/${fileName}` : fileName;
-
                     if (this.selectedNoteId === sourceId) {
                         router.replace({ name: 'note-view', params: { noteId: newId } });
                     }
                 } else {
-                    alert('Move failed: ' + res.error);
+                    // [修改] 使用 Toast 替代 alert
+                    const uiStore = useUIStore();
+                    uiStore.showNotification('Move failed: ' + res.error, 'error');
                 }
             }
         },
