@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.22.3",
+    "@tanstack/vue-virtual": "^3.5.3",
     "chokidar": "^3.6.0",
     "dayjs": "^1.11.10",
     "electron-fetch": "^1.9.1",

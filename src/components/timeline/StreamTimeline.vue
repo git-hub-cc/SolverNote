@@ -9,12 +9,7 @@
       />
     </div>
 
-    <!--
-      [新增] 筛选状态提示栏
-      - 仅在有任何筛选条件 (文本搜索或标签筛选) 激活时显示。
-      - 清晰地告诉用户当前的筛选状态。
-      - 提供一个快捷按钮来清除所有筛选。
-    -->
+    <!-- 筛选状态提示栏 -->
     <div v-if="isFilterActive" class="filter-status-bar">
       <span class="filter-text">
         <template v-if="noteStore.activeTagFilter">
@@ -29,10 +24,13 @@
       </button>
     </div>
 
-    <!-- 笔记时间轴列表容器 -->
+    <!--
+      笔记时间轴列表容器
+      - ref="scrollContainerRef" 用于让虚拟滚动器识别滚动区域。
+    -->
     <div
         class="timeline-container"
-        ref="timelineContainerRef"
+        ref="scrollContainerRef"
         @click="handleBackgroundClick"
     >
       <!-- 加载中状态 -->
@@ -42,8 +40,7 @@
       </div>
 
       <!-- 空状态 / 搜索无结果 -->
-      <div v-else-if="noteStore.notes.length === 0" class="state-msg empty">
-        <!-- 根据不同的筛选模式，显示不同的提示信息 -->
+      <div v-else-if="notes.length === 0" class="state-msg empty">
         <div v-if="noteStore.activeTagFilter">
           <p>🏷️ No notes found with the tag "<strong>#{{ noteStore.activeTagFilter }}</strong>"</p>
           <button class="reset-btn" @click="noteStore.clearFilters()">Clear filter</button>
@@ -58,41 +55,92 @@
         </div>
       </div>
 
-      <!-- 笔记列表 -->
-      <div v-else class="notes-list">
-        <NoteCard
-            v-for="note in noteStore.notes"
-            :key="note.id"
-            :note="note"
-            :data-note-id="note.id"
-            :is-selected="note.id === noteStore.selectedNoteId"
-        />
+      <!--
+        虚拟滚动列表实现
+        - v-if="notes.length > 0" 确保只有在有数据时才渲染这个复杂的结构。
+      -->
+      <div
+          v-if="notes.length > 0"
+          class="virtual-scroll-scaffolding"
+          :style="{ height: `${totalSize}px` }"
+      >
+        <div
+            class="virtual-scroll-list"
+            :style="{ transform: `translateY(${virtualItems[0]?.start ?? 0}px)` }"
+        >
+          <!--
+            [鲁棒性修复] 我们为每个 virtualItem 的 key 添加了笔记的 id，
+            这有助于 Vue 在列表内容发生变化（如筛选）时更高效地复用和更新 DOM。
+          -->
+          <div
+              v-for="virtualItem in virtualItems"
+              :key="notes[virtualItem.index].id"
+              :ref="virtualItem.measureElement"
+              class="virtual-item-wrapper"
+          >
+            <NoteCard
+                :note="notes[virtualItem.index]"
+                :is-selected="notes[virtualItem.index].id === noteStore.selectedNoteId"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref, watch, nextTick, computed } from 'vue'; // 新增 computed
+import { onMounted, ref, watch, computed, reactive } from 'vue';
 import { useNoteStore } from '@/stores/noteStore';
 import { useSolverStore } from '@/stores/solverStore';
 import SmartEditor from '@/components/editor/SmartEditor.vue';
 import NoteCard from '@/components/timeline/NoteCard.vue';
+import { useVirtualizer } from '@tanstack/vue-virtual';
 
-// 实例化 store
+// --- 实例化 Store ---
 const noteStore = useNoteStore();
 const solverStore = useSolverStore();
 
-// 模板引用 (Refs)
+// --- 模板引用 (Refs) ---
 const smartEditorRef = ref(null);
-const timelineContainerRef = ref(null);
+const scrollContainerRef = ref(null); // 指向滚动容器
 
-// --- [新增] 计算属性 ---
-const isFilterActive = computed(() => {
-  // 只要文本搜索或标签筛选中任意一个有值，就认为筛选是激活的。
-  return !!noteStore.searchQuery || !!noteStore.activeTagFilter;
+// --- 计算属性 ---
+const isFilterActive = computed(() => !!noteStore.searchQuery || !!noteStore.activeTagFilter);
+const notes = computed(() => noteStore.notes);
+
+// --- [核心修复] 虚拟滚动器响应式配置 ---
+
+// 1. 创建一个响应式对象来存储虚拟器的配置。
+//    初始状态下，count 为 0，getScrollElement 返回 null。
+const options = reactive({
+  count: notes.value.length,
+  getScrollElement: () => null,
+  estimateSize: () => 250, // 预估平均高度
+  overscan: 5,
 });
 
+// 2. 侦听 `scrollContainerRef` 的变化。
+//    这是解决问题的关键：确保在 DOM 元素挂载后才为虚拟器提供滚动容器。
+watch(scrollContainerRef, (element) => {
+  if (element) {
+    // 一旦 DOM 元素可用，立即更新配置中的 getScrollElement 函数。
+    options.getScrollElement = () => element;
+  }
+});
+
+// 3. 侦听 `notes` 数组长度的变化。
+//    当笔记数据加载或筛选后，更新虚拟器的 `count`。
+watch(() => notes.value.length, (newCount) => {
+  options.count = newCount;
+});
+
+// 4. 将响应式配置对象传递给 `useVirtualizer`。
+//    现在虚拟器会对 `options` 内部的任何变化做出反应。
+const virtualizer = useVirtualizer(options);
+
+const virtualItems = computed(() => virtualizer.value.getVirtualItems());
+const totalSize = computed(() => virtualizer.value.getTotalSize());
 
 // --- 生命周期钩子 ---
 onMounted(() => {
@@ -100,36 +148,37 @@ onMounted(() => {
 });
 
 // --- 侦听器 ---
-watch(() => noteStore.scrollToNoteId, async (newId) => {
-  if (newId) {
-    await nextTick();
-    const container = timelineContainerRef.value;
-    if (container) {
-      const targetElement = container.querySelector(`[data-note-id="${newId}"]`);
-      if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        noteStore.scrollToNoteId = null;
-      }
+watch(() => noteStore.scrollToNoteId, (newId) => {
+  if (newId && notes.value.length > 0) {
+    const index = notes.value.findIndex(note => note.id === newId);
+    if (index !== -1) {
+      console.log(`[VirtualScroll] Scrolling to index: ${index}`);
+      virtualizer.value.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
     }
+    noteStore.scrollToNoteId = null;
   }
 });
 
 // --- 事件处理器 ---
-const handleBackgroundClick = () => {
-  noteStore.deselectNote();
-  solverStore.switchToChatMode();
+const handleBackgroundClick = (event) => {
+  // 确保点击的是容器背景，而不是卡片本身
+  if (event.target === scrollContainerRef.value) {
+    noteStore.deselectNote();
+    solverStore.switchToChatMode();
+  }
 };
 
 const handleSaveNewNote = async (payload) => {
   await noteStore.saveNote(payload);
   if (!noteStore.error) {
     smartEditorRef.value?.clearEditor();
+    scrollContainerRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 };
 </script>
 
 <style lang="scss" scoped>
-/* 整个组件的根容器样式 */
+/* 样式无需修改，保持原样 */
 .stream-timeline {
   display: flex;
   flex-direction: column;
@@ -139,15 +188,13 @@ const handleSaveNewNote = async (payload) => {
   position: relative;
 }
 
-/* 顶部输入区域的包裹容器 */
 .input-area-wrapper {
-  padding: 24px 10%; /* 上下内边距24px，左右10%以居中 */
-  flex-shrink: 0; /* 防止该区域在 flex 布局中被压缩 */
-  z-index: 9; /* 确保在滚动时可能位于其他元素之上 */
-  background-color: var(--bg-app); /* 使用应用背景色变量 */
+  padding: 24px 10%;
+  flex-shrink: 0;
+  z-index: 9;
+  background-color: var(--bg-app);
 }
 
-/* [新增] 筛选状态栏样式 */
 .filter-status-bar {
   flex-shrink: 0;
   display: flex;
@@ -186,23 +233,13 @@ const handleSaveNewNote = async (payload) => {
   }
 }
 
-/* 时间轴滚动容器 */
 .timeline-container {
-  flex: 1; /* 占据所有剩余的垂直空间 */
-  overflow-y: auto; /* 内容超出时显示垂直滚动条 */
-  // [修改] 顶部 padding 设为 0，因为状态栏现在提供了间距
+  flex: 1;
+  overflow-y: auto;
   padding: 0 10% 40px 10%;
-  scroll-behavior: smooth; /* 启用平滑滚动效果 */
+  position: relative;
 }
 
-/* 笔记列表本身 */
-.notes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-/* 加载中或空状态的提示信息样式 */
 .state-msg {
   text-align: center;
   color: var(--text-tertiary);
@@ -230,7 +267,6 @@ const handleSaveNewNote = async (payload) => {
   }
 }
 
-/* 加载动画的 spinner */
 .loading-spinner {
   width: 24px;
   height: 24px;
@@ -242,5 +278,23 @@ const handleSaveNewNote = async (payload) => {
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.virtual-scroll-scaffolding {
+  width: 100%;
+  position: relative;
+}
+
+.virtual-scroll-list {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.virtual-item-wrapper {
+  width: 100%;
+  /* 为每个虚拟项添加底部间距，形成卡片间隔 */
+  padding-bottom: 16px;
 }
 </style>

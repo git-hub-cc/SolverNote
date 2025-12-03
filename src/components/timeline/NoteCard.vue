@@ -4,11 +4,6 @@
       :class="{ 'is-selected': isSelected }"
       @click="navigateToNote"
   >
-    <!--
-      卡片的点击事件 `@click` 现在调用 `navigateToNote` 方法，
-      该方法将使用 Vue Router 进行页面跳转到笔记的预览视图。
-    -->
-
     <!-- Meta Info: 时间和标签 -->
     <div class="note-header">
       <div class="meta-left">
@@ -19,24 +14,10 @@
         </div>
       </div>
 
-      <!--
-        操作按钮的点击事件通过 `@click.stop` 阻止了事件冒泡。
-        这非常重要，因为它能防止点击“编辑”或“删除”按钮时，
-        意外触发父元素 `article` 的 `navigateToNote` 跳转事件。
-      -->
       <div class="actions-group" @click.stop>
-        <!--
-          [核心重构] 编辑按钮现在调用 handleEdit 方法，
-          该方法将导航到单页视图的编辑模式。
-        -->
         <button class="action-btn" @click="handleEdit" title="Edit this note">
           <Edit2Icon class="icon-xs" />
         </button>
-        <!--
-           [核心重构] 删除逻辑修改
-           不再触发 emit('delete') 让父组件处理，而是直接在组件内调用 store 的 requestDeleteNote。
-           这样所有删除行为统一，且支持撤销。
-        -->
         <button class="action-btn danger" @click="handleRequestDelete" title="Delete">
           <Trash2Icon class="icon-xs" />
         </button>
@@ -44,6 +25,10 @@
     </div>
 
     <!-- Content Body: 渲染后的 Markdown 内容 -->
+    <!--
+      [核心修改] markdown-body 类现在包含了 max-height 样式，
+      用于限制过长内容的显示高度。
+    -->
     <div class="markdown-body" v-html="renderedContent"></div>
 
   </article>
@@ -52,7 +37,7 @@
 <script setup>
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { useNoteStore } from '@/stores/noteStore'; // 引入 Store
+import { useNoteStore } from '@/stores/noteStore';
 import dayjs from 'dayjs';
 import { Edit2 as Edit2Icon, Trash2 as Trash2Icon } from 'lucide-vue-next';
 import { renderMarkdown } from '@/utils/markdownRenderer';
@@ -65,11 +50,8 @@ const props = defineProps({
   isSelected: Boolean
 });
 
-// [核心重构] 移除 'delete' 事件，不再需要在父组件处理
-// defineEmits(['delete']);
-
 const router = useRouter();
-const noteStore = useNoteStore(); // 实例化 Store
+const noteStore = useNoteStore();
 
 const formattedTime = computed(() => {
   return dayjs(props.note.timestamp).format('MMM D, HH:mm');
@@ -79,10 +61,6 @@ const renderedContent = computed(() => {
   return renderMarkdown(props.note.content || '');
 });
 
-/**
- * 导航到笔记的预览视图。
- * 当用户点击卡片的任何非按钮区域时触发。
- */
 const navigateToNote = () => {
   router.push({
     name: 'note-view',
@@ -90,10 +68,6 @@ const navigateToNote = () => {
   });
 };
 
-/**
- * [核心重构] 处理编辑按钮点击事件。
- * 它将导航到同一个单页视图，但附加一个查询参数来触发编辑模式。
- */
 const handleEdit = () => {
   router.push({
     name: 'note-view',
@@ -102,10 +76,6 @@ const handleEdit = () => {
   });
 };
 
-/**
- * [核心重构] 请求删除笔记（软删除）
- * 点击后 UI 会立即移除该卡片，并显示撤销 Toast。
- */
 const handleRequestDelete = () => {
   noteStore.requestDeleteNote(props.note.id);
 };
@@ -113,15 +83,21 @@ const handleRequestDelete = () => {
 </script>
 
 <style lang="scss" scoped>
-/* 样式保持不变，此处省略以节省空间，直接使用之前提供的 NoteCard 样式即可 */
 .note-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   padding: 16px 20px;
-  margin-bottom: 16px;
+  /*
+    [核心修改] 移除了 margin-bottom
+    现在项与项之间的间距由父组件 (StreamTimeline.vue) 的布局控制，
+    或者可以在 .virtual-item-wrapper 上设置 padding-bottom。
+    这里移除是为了让虚拟滚动的尺寸计算更精确。
+  */
   transition: all 0.2s;
   cursor: pointer;
+  /* 添加一个底部内边距，以保证在有滚动条时内容不会紧贴边缘 */
+  padding-bottom: 20px;
 
   &:hover {
     border-color: var(--border-hover);
@@ -173,10 +149,43 @@ const handleRequestDelete = () => {
 
 .icon-xs { width: 14px; height: 14px; }
 
+/*
+  [核心修改] markdown-body 样式
+  - 增加了 max-height 来限制最大高度。
+  - overflow-y: auto 在内容超出时显示滚动条。
+  - position: relative 用于支持内部的遮罩效果。
+  - mask-image 创建了一个渐变遮罩，在内容底部产生淡出效果，
+    视觉上提示用户此处内容可滚动。
+*/
 :deep(.markdown-body) {
   font-size: 15px;
   line-height: 1.6;
   color: var(--text-primary);
+  /* 限制最大高度为视口高度的40%，或根据需要调整为固定值如 400px */
+  max-height: 40vh;
+  overflow-y: auto;
+  position: relative;
+  padding-right: 8px; /* 为滚动条留出空间，避免内容遮挡 */
+
+  /* 渐变遮罩，提升UI美感 */
+  -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
+
+  /* 自定义滚动条样式，使其更纤细 */
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.4);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
+  }
+
   p { margin-bottom: 0.75em; }
   p:last-child { margin-bottom: 0; }
   ul, ol { padding-left: 1.5em; margin-bottom: 0.75em; }

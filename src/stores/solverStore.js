@@ -1,5 +1,7 @@
-import { defineStore } from 'pinia'
-import { useNoteStore } from './noteStore'
+// src/stores/solverStore.js
+
+import { defineStore } from 'pinia';
+import { useNoteStore } from './noteStore';
 
 /**
  * [日志] 内部辅助函数，用于生成一个简单的唯一追踪ID。
@@ -13,7 +15,7 @@ export const useSolverStore = defineStore('solver', {
         mode: 'chat',
         isThinking: false,
         chatHistory: [
-            { role: 'ai', text: 'Hello, I am Solver, your AI knowledge assistant. I can analyze your drafts on the home page or analyze the current note when viewing one.' }
+            { role: 'ai', text: '你好，我是 Solver，你的 AI 知识助手。我可以分析你在主页输入的草稿，也可以在你查看笔记时分析当前笔记内容。' }
         ],
         relatedContexts: [],
         streamingText: '',
@@ -49,7 +51,6 @@ export const useSolverStore = defineStore('solver', {
             });
             this._listeners.push(unsubscribeError);
         },
-
         cleanupListeners() {
             this._listeners.forEach(unsubscribe => unsubscribe());
             this._listeners = [];
@@ -58,13 +59,9 @@ export const useSolverStore = defineStore('solver', {
         // --- 上下文分析 ---
         async analyzeContext(noteId) {
             const traceId = generateTraceId();
-            console.log(`[SolverStore][${traceId}] Starting Note-based Context Analysis...`, { noteId });
+            console.log(`[SolverStore][${traceId}] 开始基于笔记的上下文分析...`, { noteId });
 
-            if (!noteId) {
-                this.mode = 'chat';
-                return;
-            }
-
+            if (!noteId) { this.mode = 'chat'; return; }
             this.mode = 'context';
             this.isThinking = true;
             this.relatedContexts = [];
@@ -72,62 +69,42 @@ export const useSolverStore = defineStore('solver', {
 
             const noteStore = useNoteStore();
             const selectedNote = noteStore.getNoteById(noteId);
-
-            if (!selectedNote || !window.electronAPI) {
-                this.isThinking = false;
-                return;
-            }
+            if (!selectedNote || !window.electronAPI) { this.isThinking = false; return; }
 
             try {
                 let queryText = selectedNote.title?.trim() || selectedNote.content?.substring(0, 200);
-                if (!queryText.trim()) {
-                    this.isThinking = false;
-                    return;
-                }
+                if (!queryText.trim()) { this.isThinking = false; return; }
 
-                const results = await window.electronAPI.semanticSearch({
-                    queryText: queryText,
-                    traceId: traceId,
-                    excludeId: noteId
-                });
+                console.log(`[SolverStore][${traceId}] 正在调用 semanticSearch...`, { queryText });
+                const results = await window.electronAPI.semanticSearch({ queryText, traceId, excludeId: noteId });
+                console.log(`[SolverStore][${traceId}] semanticSearch 返回 ${results.length} 条结果。`, results);
 
-                if (Array.isArray(results)) {
-                    this.relatedContexts = results;
-                }
+                this.relatedContexts = Array.isArray(results) ? results : [];
             } catch (err) {
-                console.error(`[SolverStore][${traceId}] Context Search Failed:`, err);
-                this.error = 'Context analysis failed. Please check logs.';
+                console.error(`[SolverStore][${traceId}] 上下文搜索失败:`, err);
+                this.error = '上下文分析失败，请检查日志。';
             } finally {
                 this.isThinking = false;
             }
         },
-
         async analyzeDraft(draftContent) {
             const traceId = generateTraceId();
             if (!draftContent || !draftContent.trim()) {
-                this.mode = 'chat';
-                this.relatedContexts = [];
-                return;
+                this.mode = 'chat'; this.relatedContexts = []; return;
             }
-
-            console.log(`[SolverStore][${traceId}] Starting Draft-based Context Analysis...`);
-            this.mode = 'context';
-            this.isThinking = true;
-            this.relatedContexts = [];
-            this.error = null;
+            console.log(`[SolverStore][${traceId}] 开始基于草稿的上下文分析...`);
+            this.mode = 'context'; this.isThinking = true;
+            this.relatedContexts = []; this.error = null;
 
             try {
-                const results = await window.electronAPI.semanticSearch({
-                    queryText: draftContent,
-                    traceId: traceId,
-                    excludeId: null
-                });
-                if (Array.isArray(results)) {
-                    this.relatedContexts = results;
-                }
+                console.log(`[SolverStore][${traceId}] 正在调用 semanticSearch...`, { queryText: draftContent });
+                const results = await window.electronAPI.semanticSearch({ queryText: draftContent, traceId, excludeId: null });
+                console.log(`[SolverStore][${traceId}] semanticSearch 返回 ${results.length} 条结果。`, results);
+
+                this.relatedContexts = Array.isArray(results) ? results : [];
             } catch (err) {
-                console.error(`[SolverStore][${traceId}] Draft Search Failed:`, err);
-                this.error = 'Draft analysis failed. Please check logs.';
+                console.error(`[SolverStore][${traceId}] 草稿分析失败:`, err);
+                this.error = '草稿分析失败，请检查日志。';
             } finally {
                 this.isThinking = false;
             }
@@ -136,82 +113,46 @@ export const useSolverStore = defineStore('solver', {
         // --- 聊天功能 ---
         async sendMessage(text, contextContent = null) {
             if (!text.trim() || this.isThinking || !window.electronAPI) return;
-
             this.error = null;
             this.chatHistory.push({ role: 'user', text });
-
             const finalContext = this.isContextToggleOn ? contextContent : null;
-
             this.streamingText = '';
             this.isThinking = true;
             try {
-                console.log(`[SolverStore] Sending chat request, context length: ${finalContext?.length || 0}`);
+                console.log(`[SolverStore] 正在发送聊天请求... Context length: ${finalContext?.length || 0}`);
                 await window.electronAPI.startChat(text, finalContext);
             } catch (err) {
-                console.error('Failed to start chat stream:', err);
-                this.error = `Unable to start chat: ${err.message}`;
+                console.error('[SolverStore] 启动聊天流失败:', err);
+                this.error = `无法启动聊天: ${err.message}`;
                 this.isThinking = false;
             }
         },
 
-        // --- [新增] 生成 Tags 功能 ---
-        /**
-         * 基于内容生成 5 个推荐标签。
-         * @param {string} content - 需要分析的文本内容
-         * @returns {Promise<string[]>} - 标签数组
-         */
+        // --- 标签生成 ---
         async generateTagsFromContent(content) {
-            if (!content || !content.trim()) return [];
-            if (!window.electronAPI) {
-                console.warn('[SolverStore] Electron API unavailable for tag generation.');
-                return [];
-            }
+            if (!content || !content.trim() || !window.electronAPI) return [];
+            console.log('[SolverStore] 请求 AI 生成标签...');
 
-            console.log('[SolverStore] Requesting tag generation...');
-
-            // 构造强约束的 Prompt，要求输出 JSON
-            const prompt = `
-Task: Extract top 5 relevant tags from the text below.
-Rules:
-1. Output strictly a JSON array of strings.
-2. No explanations, no extra text.
-3. Sort by relevance (highest first).
-4. Example output: ["keyword1", "keyword2", "keyword3"]
-
-Text to analyze:
-${content.substring(0, 1000)}
-
-Tags (JSON array):`.trim();
-
+            const prompt = `Task: Extract top 5 relevant tags from the text below.\nRules:\n1. Output strictly a JSON array of strings.\n2. No explanations, no extra text.\n3. Sort by relevance (highest first).\n4. Example output: ["keyword1", "keyword2", "keyword3"]\n\nText to analyze:\n${content.substring(0, 1000)}\n\nTags (JSON array):`;
             try {
                 const response = await window.electronAPI.generateTags(prompt);
+                console.log('[SolverStore] AI 原始响应:', response);
 
-                if (response.success && response.text) {
-                    let rawText = response.text.trim();
-                    console.log('[SolverStore] Raw tag response:', rawText);
-
-                    // 清理可能存在的 Markdown 代码块标记 (例如 ```json ... ```)
-                    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-                    // 尝试找到 JSON 数组部分 (以 [ 开头，以 ] 结尾)
+                if (response && typeof response === 'string') {
+                    let rawText = response.trim().replace(/```json/g, '').replace(/```/g, '').trim();
                     const jsonMatch = rawText.match(/\[.*\]/s);
                     if (jsonMatch) {
-                        rawText = jsonMatch[0];
-                    }
-
-                    const tags = JSON.parse(rawText);
-                    if (Array.isArray(tags)) {
-                        // 过滤非字符串项，取前5个，转换为小写
-                        return tags
-                            .filter(t => typeof t === 'string')
-                            .map(t => t.toLowerCase().trim())
-                            .slice(0, 5);
+                        const tags = JSON.parse(jsonMatch[0]);
+                        if (Array.isArray(tags)) {
+                            const finalTags = tags.filter(t => typeof t === 'string').map(t => t.toLowerCase().trim()).slice(0, 5);
+                            console.log('[SolverStore] 成功解析出标签:', finalTags);
+                            return finalTags;
+                        }
                     }
                 }
-                throw new Error('Invalid model response format');
+                throw new Error('AI 返回格式无效');
             } catch (error) {
-                console.error('[SolverStore] Tag generation failed:', error);
-                // 不向用户显示错误，静默失败，避免打扰编辑器流程
+                console.error('[SolverStore] 标签生成或解析失败:', error);
                 return [];
             }
         },
@@ -219,7 +160,6 @@ Tags (JSON array):`.trim();
         setDraftContext(content) {
             this.draftContext = content;
         },
-
         clearDraftContext() {
             this.draftContext = '';
             if (this.mode === 'context') {
@@ -227,11 +167,9 @@ Tags (JSON array):`.trim();
                 this.relatedContexts = [];
             }
         },
-
         toggleContextInclusion() {
             this.isContextToggleOn = !this.isContextToggleOn;
         },
-
         switchToChatMode() {
             this.mode = 'chat';
         }

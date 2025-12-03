@@ -3,17 +3,17 @@
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
-// 使用 electron-fetch，它对 Electron 环境作了优化，能更好地处理网络代理等问题
 const fetch = require('electron-fetch').default;
+// [日志] 引入 electron-log
+const log = require('electron-log');
 
 /**
  * 获取并确保模型存储目录存在。
  * @returns {string} 模型存储目录的绝对路径。
  */
 function getModelsDir() {
-    // 将模型存储在应用的用户数据目录下的 'models' 文件夹中，这是一个标准实践
     const modelsPath = path.join(app.getPath('userData'), 'models');
-    // fs-extra 的 ensureDirSync 会检查目录是否存在，如果不存在则自动创建
+    // 确保目录存在，如果不存在则自动创建
     fs.ensureDirSync(modelsPath);
     return modelsPath;
 }
@@ -29,31 +29,37 @@ async function downloadModel(win, url, fileName) {
     const modelsDir = getModelsDir();
     const filePath = path.join(modelsDir, fileName);
 
-    // 如果文件已存在，则跳过下载，避免重复下载大文件
+    log.info(`[Model Manager] 收到下载请求: 文件=${fileName}, URL=${url}`);
+
     if (await fs.pathExists(filePath)) {
-        console.log(`模型文件 ${fileName} 已存在，跳过下载。`);
+        log.info(`[Model Manager] 文件 ${fileName} 已存在，跳过下载。`);
+        // 文件已存在，也应该通知前端完成
+        if (win && !win.isDestroyed()) {
+            const stats = await fs.stat(filePath);
+            win.webContents.send('model-download-progress', { fileName, progress: 100, receivedBytes: stats.size, totalBytes: stats.size });
+        }
         return filePath;
     }
 
     try {
+        log.info(`[Model Manager] 开始从网络获取模型: ${fileName}`);
         const res = await fetch(url);
         if (!res.ok) {
-            throw new Error(`下载失败: ${res.statusText}`);
+            const errorText = await res.text();
+            throw new Error(`下载失败: 服务器响应 ${res.status} ${res.statusText}. 详情: ${errorText}`);
         }
 
-        // 从响应头获取文件总大小，用于计算进度
         const totalBytes = Number(res.headers.get('content-length'));
+        log.info(`[Model Manager] 文件总大小: ${totalBytes} bytes.`);
         const fileStream = fs.createWriteStream(filePath);
 
         let receivedBytes = 0;
-        let lastProgress = -1; // 用于避免过于频繁地发送进度更新
+        let lastProgress = -1;
 
-        // 监听数据块接收事件
         res.body.on('data', (chunk) => {
             receivedBytes += chunk.length;
-            const progress = Math.round((receivedBytes / totalBytes) * 100);
+            const progress = totalBytes > 0 ? Math.round((receivedBytes / totalBytes) * 100) : 0;
 
-            // 只有在进度百分比发生变化时，才通过 IPC 向渲染进程发送消息
             if (progress > lastProgress) {
                 if (win && !win.isDestroyed()) {
                     win.webContents.send('model-download-progress', { fileName, progress, receivedBytes, totalBytes });
@@ -62,19 +68,26 @@ async function downloadModel(win, url, fileName) {
             }
         });
 
-        // 使用 Promise 封装流的结束和错误事件
         await new Promise((resolve, reject) => {
             res.body.pipe(fileStream);
-            fileStream.on('finish', resolve);
-            fileStream.on('error', reject);
+            fileStream.on('finish', () => {
+                // [日志] 确保在写入完成后记录
+                log.info(`[Model Manager] 文件流写入完成: ${fileName}`);
+                resolve();
+            });
+            fileStream.on('error', (err) => {
+                // [日志] 记录流写入错误
+                log.error(`[Model Manager] 文件流写入时发生错误: ${fileName}`, err);
+                reject(err);
+            });
         });
 
-        console.log(`模型 ${fileName} 下载完成。`);
+        log.info(`[Model Manager] 模型 ${fileName} 下载并保存成功。`);
         return filePath;
     } catch (error) {
-        console.error(`下载模型 ${fileName} 时出错:`, error);
-        // 如果下载过程中发生错误，清理掉不完整的文件，避免下次启动时误判为已下载
-        await fs.remove(filePath).catch(err => console.error('清理失败文件时出错:', err));
+        log.error(`[Model Manager] 下载模型 ${fileName} 时发生严重错误:`, error);
+        // 清理掉不完整的下载文件
+        await fs.remove(filePath).catch(err => log.error(`[Model Manager] 清理下载失败的文件时出错: ${fileName}`, err));
         throw error; // 将错误向上抛出
     }
 }
@@ -86,12 +99,14 @@ async function downloadModel(win, url, fileName) {
 async function listLocalModels() {
     try {
         const modelsDir = getModelsDir();
+        log.info(`[Model Manager] 正在列出本地模型，目录: ${modelsDir}`);
         const files = await fs.readdir(modelsDir);
-        // 过滤出 .gguf 格式的模型文件，以防目录中有其他文件
-        return files.filter(file => file.endsWith('.gguf'));
+        const ggufFiles = files.filter(file => file.endsWith('.gguf'));
+        log.info(`[Model Manager] 发现 ${ggufFiles.length} 个本地模型文件。`);
+        return ggufFiles;
     } catch (error) {
         // 如果目录不存在或读取失败，返回空数组，避免程序崩溃
-        console.error('无法列出本地模型:', error);
+        log.error('[Model Manager] 无法列出本地模型:', error);
         return [];
     }
 }
