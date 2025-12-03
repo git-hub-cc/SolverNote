@@ -86,17 +86,12 @@
             >
               <MoonIcon class="icon-sm"/> Dark
             </button>
-            <!--
-              [核心修改] 移除了 "System" 主题选项按钮。
-              UI 现在只提供 "Light" 和 "Dark" 两种明确的选择，
-              与 store 中的新逻辑完全匹配。
-            -->
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 4. AI 模型下载区域 (保持不变) -->
+    <!-- 4. AI 模型下载区域 -->
     <section class="settings-section">
       <h3 class="section-title">AI Models</h3>
       <p class="section-description">
@@ -124,7 +119,7 @@
       </div>
     </section>
 
-    <!-- 5. AI 服务状态面板 (保持不变) -->
+    <!-- 5. AI 服务状态面板 -->
     <section class="settings-section">
       <h3 class="section-title">AI Service Status</h3>
       <div class="status-panel">
@@ -167,21 +162,21 @@ import { useNoteStore } from '@/stores/noteStore';
 import {
   DownloadCloudIcon, CheckCircle2Icon, LoaderCircleIcon, AlertTriangleIcon, XCircleIcon,
   BrainCircuitIcon, Sun as SunIcon, Moon as MoonIcon,
-  // [核心修改] 移除不再使用的 LaptopIcon 图标导入。
   FolderOpen as FolderOpenIcon, AlertCircle as AlertCircleIcon
 } from 'lucide-vue-next';
 
+// --- 状态管理 ---
 const uiStore = useUIStore();
 const noteStore = useNoteStore();
 
-// --- 常规设置状态 ---
+// --- 通用设置状态 ---
 const settings = reactive({
   notesPath: '',
   deleteMode: 'trash'
 });
-const pathChanged = ref(false);
+const pathChanged = ref(false); // 用于显示路径变更后的提示信息
 
-// --- 模型相关状态 (保持不变) ---
+// --- AI模型相关状态 ---
 const recommendedModels = [
   {
     name: 'Qwen1.5-0.5B-Chat',
@@ -196,17 +191,22 @@ const recommendedModels = [
     size: '~290MB', type: 'Embedding Model', description: 'High performance English embedding model.'
   },
 ];
-const modelsDir = ref('Loading path...');
-const localModels = ref([]);
-const downloadProgress = ref({});
-const globalError = ref('');
-const globalSuccess = ref('');
-const modelStatuses = ref({ chat: 'Uninitialized', embedding: 'Uninitialized' });
-let unsubscribeDownloadProgress = null;
+const modelsDir = ref('Loading path...'); // 模型存储目录
+const localModels = ref([]); // 本地已存在的模型列表
+const downloadProgress = ref({}); // 下载进度
+const globalError = ref(''); // 全局错误信息
+const globalSuccess = ref(''); // 全局成功信息
+const modelStatuses = ref({ chat: 'Uninitialized', embedding: 'Uninitialized' }); // AI模型加载状态
+let unsubscribeDownloadProgress = null; // 用于取消下载进度监听
 
+// --- 计算属性 ---
 const isDownloading = computed(() => (fileName) => fileName in downloadProgress.value);
 
-// --- 核心方法: 设置管理 (保持不变) ---
+// --- 核心方法: 设置管理 ---
+
+/**
+ * @description 从主进程加载并应用设置
+ */
 async function loadSettings() {
   if (window.electronAPI) {
     const data = await window.electronAPI.getSettings();
@@ -216,16 +216,31 @@ async function loadSettings() {
     }
   }
 }
+
+/**
+ * @description 更新单项设置，并通知主进程
+ * @param {string} key - 设置项的键
+ * @param {string | boolean} value - 设置项的值
+ */
 async function updateSetting(key, value) {
   if (window.electronAPI) {
     await window.electronAPI.setSetting(key, value);
+
+    // [核心修复] 如果是笔记路径发生了变更
     if (key === 'notesPath') {
       pathChanged.value = true;
       setTimeout(() => { pathChanged.value = false; }, 5000);
+      // 重新加载笔记列表
       await noteStore.fetchNotes();
+      // [新增] 重新加载文件树，以同步左侧导航栏的视图
+      await noteStore.fetchFileTree();
     }
   }
 }
+
+/**
+ * @description 打开系统对话框以选择新的笔记目录
+ */
 async function changeNotesDir() {
   if (window.electronAPI) {
     const newPath = await window.electronAPI.selectFolder();
@@ -235,19 +250,36 @@ async function changeNotesDir() {
     }
   }
 }
+
+/**
+ * @description 在系统文件管理器中打开笔记目录
+ */
 async function openInExplorer() {
   if (window.electronAPI && settings.notesPath) {
     await window.electronAPI.openPath(settings.notesPath);
   }
 }
 
-// --- 核心方法: 模型管理 (保持不变) ---
+// --- 核心方法: 模型管理 ---
+
+/**
+ * @description 获取本地已下载的模型列表
+ */
 async function fetchLocalModels() {
   if (window.electronAPI) localModels.value = await window.electronAPI.listLocalModels();
 }
+
+/**
+ * @description 获取 AI 模型服务的当前状态
+ */
 async function fetchModelStatuses() {
   if (window.electronAPI) modelStatuses.value = await window.electronAPI.getModelsStatus();
 }
+
+/**
+ * @description 触发模型下载
+ * @param {object} model - 包含模型信息（URL, 文件名等）的对象
+ */
 async function downloadModel(model) {
   if (!window.electronAPI) return;
   globalError.value = ''; globalSuccess.value = '';
@@ -264,30 +296,32 @@ async function downloadModel(model) {
   }
 }
 
-// --- 辅助显示函数 (保持不变) ---
+// --- 辅助显示函数 ---
 const formatStatusText = (s) => ({ 'Uninitialized': 'Initializing...', 'Loading': 'Loading...', 'Ready': 'Ready', 'Not Found': 'Not Found', 'Error': 'Error' }[s] || 'Unknown');
 const statusClass = (s) => ({ 'Ready': 'status-success', 'Not Found': 'status-warning', 'Error': 'status-danger' }[s] || 'status-loading');
 const statusIcon = (s) => ({ 'Ready': BrainCircuitIcon, 'Not Found': AlertTriangleIcon, 'Error': XCircleIcon }[s] || LoaderCircleIcon);
 
-// --- 生命周期 (保持不变) ---
+// --- 生命周期钩子 ---
 onMounted(async () => {
   await loadSettings();
   if (window.electronAPI) {
     modelsDir.value = await window.electronAPI.getModelsDir();
     await fetchLocalModels();
     await fetchModelStatuses();
+    // 监听模型下载进度
     unsubscribeDownloadProgress = window.electronAPI.onModelDownloadProgress((data) => {
       downloadProgress.value[data.fileName] = data.progress;
     });
   }
 });
+
 onUnmounted(() => {
+  // 组件卸载时，清理监听器
   if (unsubscribeDownloadProgress) unsubscribeDownloadProgress();
 });
 </script>
 
 <style lang="scss" scoped>
-/* 样式无需修改，保持原样 */
 :root {
   --color-success-bg: #F0FDF4; --color-success-border: #86EFAC; --color-success-text: #15803D; --color-success-icon: #10B981;
   --color-danger-bg: #FEF2F2; --color-danger-border: #FCA5A5; --color-danger-text: #B91C1C;
@@ -302,10 +336,12 @@ html.dark {
 .view-header { margin-bottom: 32px; border-bottom: 1px solid var(--border-light); padding-bottom: 16px; h2 { font-size: 24px; font-weight: 700; } .sub-header { color: var(--text-secondary); font-size: 14px; } }
 .settings-section { margin-bottom: 48px; }
 .section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+.section-description { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; .path-info { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 12px; } }
 .setting-item {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: 20px 0; border-bottom: 1px solid var(--border-light);
   &:first-of-type { padding-top: 0; }
+  &:last-of-type { border-bottom: none; }
 }
 .setting-label {
   max-width: 40%;
@@ -325,14 +361,17 @@ html.dark {
   }
 }
 .action-btn {
-  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px;
   border-radius: 6px; background: var(--bg-hover); color: var(--text-primary);
-  font-size: 13px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s;
+  font-size: 13px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; white-space: nowrap;
   &:hover { background: var(--border-light); }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
   &.secondary { font-size: 12px; padding: 4px 10px; background: transparent; border: 1px solid var(--border-light); }
+  .success-icon { color: var(--color-success-icon); }
 }
 .warning-text { font-size: 12px; color: var(--color-warning-text); display: flex; align-items: center; gap: 4px; margin-top: 4px; }
 .icon-xs { width: 14px; height: 14px; }
+.icon-sm { width: 16px; height: 16px; }
 .radio-group { display: flex; flex-direction: column; gap: 8px; }
 .radio-label {
   display: flex; align-items: center; gap: 8px; font-size: 13px;
@@ -340,12 +379,24 @@ html.dark {
   input[type="radio"] { accent-color: var(--color-brand); }
 }
 .theme-selector { display: flex; background: var(--bg-hover); padding: 4px; border-radius: 8px; gap: 4px; }
-.theme-option { padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; display: flex; gap: 6px; color: var(--text-secondary); &.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--shadow-card); } }
+.theme-option { padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); transition: all 0.2s; &.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--shadow-card); } }
 .model-list { display: grid; gap: 16px; }
-.model-card { background: var(--bg-card); border: 1px solid var(--border-light); padding: 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+.model-card { background: var(--bg-card); border: 1px solid var(--border-light); padding: 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.model-info { flex: 1; min-width: 200px; }
+.model-name { font-weight: 600; display: block; }
+.model-meta { font-size: 12px; color: var(--text-tertiary); display: block; margin: 2px 0 8px; }
+.model-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
 .status-panel { background: var(--bg-card); border: 1px solid var(--border-light); padding: 8px; border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
 .status-item { display: flex; justify-content: space-between; padding: 12px 16px; background: var(--bg-app); border-radius: 4px; align-items: center; }
-.status-indicator { display: flex; gap: 8px; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; &.status-success { background: var(--color-success-bg); color: var(--color-success-text); } }
-.error-box { background: var(--color-danger-bg); color: var(--color-danger-text); padding: 12px; border-radius: 4px; margin-top: 16px; }
-.success-box { background: var(--color-success-bg); color: var(--color-success-text); padding: 12px; border-radius: 4px; margin-top: 16px; }
+.status-info { display: flex; flex-direction: column; }
+.status-name { font-weight: 500; }
+.status-model-name { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.status-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500;
+  &.status-success { background: var(--color-success-bg); color: var(--color-success-text); }
+  &.status-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+  &.status-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+  &.status-loading { color: var(--text-secondary); }
+}
+.error-box { background: var(--color-danger-bg); border: 1px solid var(--color-danger-border); color: var(--color-danger-text); padding: 12px; border-radius: 4px; margin-top: 16px; font-size: 13px; }
+.success-box { background: var(--color-success-bg); border: 1px solid var(--color-success-border); color: var(--color-success-text); padding: 12px; border-radius: 4px; margin-top: 16px; font-size: 13px; }
 </style>
